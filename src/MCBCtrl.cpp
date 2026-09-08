@@ -10,6 +10,7 @@
 #include <boost/thread/mutex.hpp>
 #include <boost/thread/shared_mutex.hpp>
 #include <mutex>
+#include <atomic>
 #endif
 
 #include "MCBCtrl.h"
@@ -40,6 +41,12 @@ static AFX_EXTENSION_MODULE MCBCtrlDLL = { NULL, NULL };
 //CMCBCtrlC mcb;
 CMCBThread* gpMCBThread;
 bool gbMCBTimer;
+/* FIX: track in-flight OnTimer rounds so MCB_CMD_CLOSE can wait for
+ * the last one to finish before deleting gpMCBThread. The old code
+ * raced a detached CLOSE thread against delete -> NULL deref at
+ * CMCBThread::MCBCommand+0x405 (segfault at 8) on every Reconnect. */
+static std::atomic<int>  g_onTimerActive{0};
+static std::atomic<bool> g_onTimerQuit{false};
 PFCALLBACK gCallBack =NULL;
 //extern boost::shared_mutex mutex1;
 //extern mutex _mutex;
@@ -183,6 +190,7 @@ void SetMCBCommand(WPARAM wParam, LPARAM lParam)
                     gpMCBThread = new CMCBThread;
                     gCallBack = (PFCALLBACK)lParam;
                     gbMCBTimer =true;
+                    g_onTimerQuit = false;
                     std::thread th(MCBTimer,gpMCBThread);
                     th.detach();
                 }
@@ -213,11 +221,15 @@ void SetMCBCommand(WPARAM wParam, LPARAM lParam)
             if (gpMCBThread)
             {
                 //gpMCBThread->PostThreadMessage(WM_MCBTHREAD_CMD, MCB_CMD_CLOSE, 0);
-                std::thread th([=]{
-                    gpMCBThread->MCBCommand(MCB_CMD_CLOSE, 0);
-                });
-                th.detach();
+                /* FIX: run CLOSE synchronously. The old detached thread
+                 * read gpMCBThread while this thread deleted it below ->
+                 * NULL deref (MCBCommand+0x405, segfault at 8). */
                 gbMCBTimer =false;
+                g_onTimerQuit = true;
+                for (int i = 0; i < 200 && g_onTimerActive > 0; i++)
+                    usleep(10*1000); /* wait in-flight OnTimer round (<=2s) */
+                gpMCBThread->MCBCommand(MCB_CMD_CLOSE, 0);
+                g_onTimerQuit = false;
                 //Sleep(200); // wait for connection close;
                 //gpMCBThread->PostThreadMessage(WM_QUIT, 0, 0); // �@��linux�汾����Ҫ���]�д��ڣ��M�̽Y�������� ssx 2023��10��17��10:50:22
                 delete gpMCBThread;
@@ -353,7 +365,11 @@ UINT MCBTimer(void * pParam)
             gpMCBThread->PostThreadMessage(WM_MCBTHREAD_TIMER, 0, 0);
 #else
             std::thread th([=]{
+                /* FIX: never touch gpMCBThread once CLOSE started */
+                ++g_onTimerActive;
+                if (g_onTimerQuit) { --g_onTimerActive; return; }
                 gpMCBThread->MCBTimer(0,0);
+                --g_onTimerActive;
             });
             th.detach();
 #endif
