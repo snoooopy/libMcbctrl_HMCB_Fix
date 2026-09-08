@@ -1,0 +1,51 @@
+--regCtrlA (7 downto 0)
+bit    7         6         5               4                  3         2          1           0
+def   RUN       TRIG     hw-watchdog-cls hw-watchdog-en     ACCEN      M/S      SYNIN  	 PTSMD_SIM
+(1)   start     ext        cls              en              DISABLE   master      SE          EN    
+(0)   stop      inner                                       ENABLE  	 slave      DIFF
+
+--regCtrlB (7 downto 0)
+bit    7             6           5         4         3         2         1          0
+def SYSTEM reset   reset POTM   AIN1      AIN0      LED0              AD bit     SDA EN
+(1)    reset          reset                                              20         en
+(0)                                                                      24			
+
+--regRam (7 downto 4 )// Control                                            (3 downto 0 )// Status
+bit    7               6           5                     4                   3            2                        1          0
+def  reset RAM Addr            change RAM buffer   clear data sign         rd AddrMsb   wr AddrMsb    data sign: BUFFER1   BUFFER0
+(1)    reset                                             clear               BUFFER1      BUFFER1             data ready   data ready
+(0)                                                                          BUFFER0      BUFFER0               no data      no data
+
+--regAD_PG (1 downto 0)
+bit 3         2          1          0
+def CCLK      D0      AD_PG EN    AD PROG
+(1)          
+(0)                      EN
+
+--regStatus (7 downto 0)
+bit    7         6          5             4         3         2         1          0
+def                      adm_empty    adm_full    exset3    exset2    exset1     exset0
+(1)   
+(0)   
+exset(3 downto 0): 0000 -- master ,control sync signal; others --slave
+
+--regError (7 downto 4 )// Control              (3 downto 0 )// Status
+bit    7         6          5        4            3                  2                1                0
+def   Clear(3)  Clear(2)  Clear(1)  Clear(0)    SD_OverTime  ADM buffer full    Int_Time>trig_period
+(1)   clear     clear     clear     clear       overtime            full
+(0)   
+
+--regPOTMT(19 downto 0)  potm period 1 is 1uS
+--regPOTMW(15 downto 0)  potm width 1  is 1uS
+
+//--regACCT(19 downto 0)  accelerator period 1 is 1uS
+
+--regSIPA_INT(19 downto 0)  SIPA integration time 1 is 1uS
+
+PORT define
+DI
+bit    3       2      1          0
+                 acc_energy   syn_in
+DO
+bit    1       0
+    acc_syno  syn_out

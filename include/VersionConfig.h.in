@@ -1,0 +1,22 @@
+#define VERSION_MAJOR               @NUCTECH_VERSION_MAJOR@
+#define VERSION_MINOR               @NUCTECH_VERSION_MINOR@
+#define VERSION_PATCH               @NUCTECH_VERSION_PATCH@
+#define VERSION_OSS                 "@OSS_VERSION_mcbctrl@"
+#define VERSION_BUILD_TIME          "@NUCTECH_VERSION_BUILD_TIME@"
+#define VERSION_BUILD_TYPE          "@CMAKE_BUILD_TYPE@"
+#include <oss_version.h>
+
+extern std::string g_oss_version_ossVersion;
+extern std::string g_oss_version_buildTime;
+extern std::string g_oss_version_buildType;
+
+bool init_version(int argc, char* argv[])
+{
+    g_oss_version_ossVersion = VERSION_OSS;
+    g_oss_version_buildTime = VERSION_BUILD_TIME;
+    g_oss_version_buildType = VERSION_BUILD_TYPE;
+    if( inquiry_oss_version(argc, argv) ){
+        return true;
+    }
+    return false;
+}
