@@ -33,6 +33,27 @@ CRequestSocket::CRequestSocket(CMCBCtrlC* pMCBCtrlC, int nIndex, int nPort)
 
 CRequestSocket::~CRequestSocket()
 {
+    /* FIX: stop the receive thread BEFORE freeing m_socket. It used to be
+     * detached and kept touching the destroyed object after ConnectClose()
+     * deleted m_pDataSocket -> segfault a few seconds after cable unplug. */
+    StopRecvThread();
+    std::unique_lock<std::mutex> lock(m_mutex_scoket);
+    if(m_socket != NULL)
+    {
+        boost::system::error_code ignore_ec;
+        m_socket->close(ignore_ec);
+        delete m_socket;
+        m_socket = NULL;
+    }
+}
+
+/* FIX: stop the receive thread and wait for its exit (<=1s, bounded by
+ * SO_RCVTIMEO). Guard against self-join just in case. */
+void CRequestSocket::StopRecvThread()
+{
+    m_bStopThread = true;
+    if (m_recvThread.joinable() && m_id != std::this_thread::get_id())
+        m_recvThread.join();
 }
 
 // Do not edit the following lines, which are needed by ClassWizard.
@@ -213,12 +234,16 @@ int CRequestSocket::Receive(void *lpBuf, int nBufLen, int nFlags)
 
 void CRequestSocket::Close()
 {
-   // boost::unique_lock<boost::shared_mutex> read_lock(mutex1);
-//    if(m_socket->is_open())
-//    {
-//        m_socket->shutdown(boost::asio::ip::tcp::socket::shutdown_both);
-//        //m_socket->close();
-//    }
+    /* FIX: real close - stop receive thread, then close & free socket */
+    StopRecvThread();
+    std::unique_lock<std::mutex> lock(m_mutex_scoket);
+    if(m_socket != NULL)
+    {
+        boost::system::error_code ignore_ec;
+        m_socket->close(ignore_ec);
+        delete m_socket;
+        m_socket = NULL;
+    }
 }
 
 bool CRequestSocket::Create(int nSocketPort, int nSocketType, std::string lpszSocketAddress)
@@ -243,17 +268,19 @@ bool CRequestSocket::GetSockOpt(int nOptionName, void *lpOptionValue, int *lpOpt
 bool CRequestSocket::Connect(const std::string &strHostAddr, const int &nHostPort)
 {
    // boost::unique_lock<boost::mutex> lock(mutex1);
+    /* FIX: stop previous receive thread before touching m_socket */
+    StopRecvThread();
     std::unique_lock<std::mutex> lock(m_mutex_scoket);
     ip::tcp::endpoint ep(ip::address_v4::from_string(strHostAddr),nHostPort);
     boost::system::error_code ec;
     if(m_socket != NULL)
     {
-        m_socket->close();
+        boost::system::error_code ignore_ec;
+        m_socket->close(ignore_ec);
         delete m_socket;
         m_socket = NULL;
     }
-    io_service iosrv;
-    m_socket = new ip::tcp::socket(iosrv);
+    m_socket = new ip::tcp::socket(m_iosrv); /* FIX: member io_service (local one died with Connect()) */
     m_socket->connect(ep,ec);
 
     boost::asio::socket_base::keep_alive option(true);
@@ -280,12 +307,21 @@ bool CRequestSocket::Connect(const std::string &strHostAddr, const int &nHostPor
     if(ec)
     {
         std::cout<<boost::system::system_error(ec).what()<< std::endl;
+        /* FIX: free the failed socket instead of leaking it */
+        std::unique_lock<std::mutex> lock2(m_mutex_scoket);
+        boost::system::error_code ignore_ec;
+        m_socket->close(ignore_ec);
+        delete m_socket;
+        m_socket = NULL;
         return false;
     }
     else
     {
-        std::thread th([&]{
-            while(m_socket !=NULL)
+        /* FIX: capture this explicitly, keep the handle (no detach) and
+         * honour the atomic stop flag so the thread never outlives us */
+        m_bStopThread = false;
+        m_recvThread = std::thread([this]{
+            while(!m_bStopThread && m_socket !=NULL)
             {
                 m_id = std::this_thread::get_id();
 //                if(m_socket!=NULL&& m_socket->is_open())
@@ -304,7 +340,6 @@ bool CRequestSocket::Connect(const std::string &strHostAddr, const int &nHostPor
                 //lock.unlock();
             }
         });
-        th.detach();
         return true;
     }
     return true;

@@ -103,8 +103,11 @@ INT32S ETH_init(ULONG S_addr, unsigned short nMCB)
     std::string strIp = tmp;
     ip::tcp::endpoint ep(ip::address_v4::from_string(strIp),ETH_CTRL_PORT);
     boost::system::error_code ec;
-    io_service iosrv;
-    ip::tcp::socket * sket = new ip::tcp::socket(iosrv);
+    /* FIX: the socket must bind to an io_service that outlives it. A local
+     * io_service dies with ETH_init(), and later close()/dtor on the socket
+     * dereferences the freed io_service (general protection fault). */
+    static io_service g_ctrl_iosrv;
+    ip::tcp::socket * sket = new ip::tcp::socket(g_ctrl_iosrv);
 
     //sket->non_blocking(true);
 

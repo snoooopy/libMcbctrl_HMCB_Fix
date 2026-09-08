@@ -11,6 +11,8 @@
 #else
 #include<boost/asio.hpp>
 #include<mutex>
+#include<atomic>
+#include<thread>
 
 using namespace boost::asio;
 #endif
@@ -69,9 +71,13 @@ public:
 
     virtual int CheckSocketStatus();//检测socket 链接状态
 private:
+    io_service m_iosrv; /* FIX: must outlive m_socket - its dtor deregisters from the io_service */
     ip::tcp::socket *m_socket=NULL;
     std::thread::id m_id;
     std::mutex m_mutex_scoket;
+    std::atomic<bool> m_bStopThread{false}; /* FIX: recv-thread stop flag */
+    std::thread m_recvThread;               /* FIX: keep handle, no detach */
+    void StopRecvThread();
 #endif
 public:
 };
