@@ -111,7 +111,22 @@ INT32S ETH_init(ULONG S_addr, unsigned short nMCB)
 
     //sket->non_blocking(true);
 
-    sket->connect(ep,ec);
+    /* FIX: bounded connect (3s). The old synchronous connect() blocked
+     * ~156s after cable unplug (kernel SYN retransmission black hole;
+     * measured 11:59:00->12:01:16 in HMCBCtrl.log), so auto-reconnect
+     * ran at most one attempt per ~2.5min - a re-plugged cable took
+     * minutes to recover. */
+    g_ctrl_iosrv.restart(); /* a previous run_for() may have stopped it */
+    sket->async_connect(ep, [&](const boost::system::error_code& e){ ec = e; });
+    if (g_ctrl_iosrv.run_for(std::chrono::seconds(3)) == 0) /* 0 = timeout */
+    {
+        boost::system::error_code ignore_ec;
+        sket->close(ignore_ec); /* cancel the pending async_connect   */
+        g_ctrl_iosrv.poll();    /* drain the aborted handler NOW while */
+                               /* its [&] captures are still on stack  */
+        delete sket;
+        return -1;
+    }
     boost::asio::socket_base::keep_alive option(true);
     sket->set_option(option);
     int keepalive = 1;
@@ -131,10 +146,27 @@ INT32S ETH_init(ULONG S_addr, unsigned short nMCB)
     if(ec)
     {
         std::cout<<boost::system::system_error(ec).what()<< std::endl;
+        /* FIX: free the failed socket. asio keeps the fd open after a
+         * failed connect; without this every retry leaked one fd until
+         * EMFILE and the device could never be reached again. */
+        boost::system::error_code ignore_ec;
+        sket->close(ignore_ec);
+        delete sket;
         return -1;
     }
     //std::cout << " ETH_CTRL_PORT  : " << ETH_CTRL_PORT << std::endl;
-    _ETH_CTRL_socket.push_back(sket);
+    /* FIX: store by slot nMCB instead of push_back. push_back mixed with
+     * erase() shifted indices after reconnects, leaving I/O on a dead
+     * slot-0 socket while the fresh connection sat unused at the tail. */
+    if (_ETH_CTRL_socket.size() <= nMCB)
+        _ETH_CTRL_socket.resize(nMCB + 1, nullptr);
+    if (_ETH_CTRL_socket[nMCB])
+    {
+        boost::system::error_code ignore_ec2;
+        _ETH_CTRL_socket[nMCB]->close(ignore_ec2);
+        delete _ETH_CTRL_socket[nMCB];
+    }
+    _ETH_CTRL_socket[nMCB] = sket;
 
     ///////////////////////////////////////////////////////////////////
 
@@ -200,22 +232,20 @@ void ETH_CTRL_close(unsigned short nMCB)
         return;
     if(nMCB>=_ETH_CTRL_socket.size())
         return;
+    /* FIX: unconditional release. The old TCP_INFO gate spared sockets
+     * that still looked ESTABLISHED with lost==0 (e.g. idle link with a
+     * silent peer), so a dead socket stayed in its slot and the freshly
+     * reconnected one was never used -> 'cannot reconnect after replug'. */
     auto fd_mcb = _ETH_CTRL_socket[nMCB];
-    struct tcp_info info;
-    int leninfo = sizeof(info);
-    getsockopt(fd_mcb->native_handle(), IPPROTO_TCP, TCP_INFO, &info, (socklen_t *)&leninfo);
-
-    if (info.tcpi_state == TCP_ESTABLISHED && info.tcpi_lost==0 )
+    if (fd_mcb)
     {
-
-
+        boost::system::error_code ignore_ec;
+        fd_mcb->close(ignore_ec);
+        delete fd_mcb;
     }
-    else
-    {
-         fd_mcb->close();
-         _ETH_CTRL_socket.erase(_ETH_CTRL_socket.begin()+nMCB,_ETH_CTRL_socket.begin()+nMCB+1);
-         delete fd_mcb;
-    }
+    /* FIX: null the slot instead of erase() - erase shifts later entries
+     * and desyncs [nMCB] indexing; ETH_CTRL_IsValid() treats null as dead. */
+    _ETH_CTRL_socket[nMCB] = nullptr;
 #endif
     //WSACleanup();
 }
@@ -228,6 +258,11 @@ INT8U  ETH_CTRL_write(INT32U  addr,INT8U * pdata, INT8U  len, unsigned short nMC
     INT32S  tr_len =0;
     INT32S	wr_err_cnt = 0;
     //
+    /* FIX: guard - the slot may be empty/null (never connected, or
+     * closed on link failure); the old bare [nMCB] deref was UB. */
+    if (nMCB >= _ETH_CTRL_socket.size() || !_ETH_CTRL_socket[nMCB]
+        || !_ETH_CTRL_socket[nMCB]->is_open())
+        return -1;
     _rbcp_packet_ID++;
 
     _rbcp_buf.ver_type = 0xFF;
@@ -301,7 +336,9 @@ INT8U  ETH_CTRL_write(INT32U  addr,INT8U * pdata, INT8U  len, unsigned short nMC
 //Return value: 0 = No error, others = Find errors.
 INT8U  ETH_CTRL_read(INT32U  addr,INT8U * pdata, INT8U  len, unsigned short nMCB)
 {
-    if(nMCB >= _ETH_CTRL_socket.size())
+    /* FIX: also reject null slot / closed socket (was bare UB) */
+    if (nMCB >= _ETH_CTRL_socket.size() || !_ETH_CTRL_socket[nMCB]
+        || !_ETH_CTRL_socket[nMCB]->is_open())
     {
         return -1;
     }
@@ -617,6 +654,9 @@ INT32S ETH_DATA_read_buffer_residual_data(unsigned short nMCB)
 //������_ETH_CTRL_socket��ȡ���ݣ�ֱ����ջ����е����ݡ�
 INT32S ETH_CTRL_read_buffer_residual_data(unsigned short nMCB)
 {
+    /* FIX: guard against empty/null slot (was bare UB) */
+    if (nMCB >= _ETH_CTRL_socket.size() || !_ETH_CTRL_socket[nMCB])
+        return -1;
     INT8U  buf[512];
     INT32S rd_size, rd_err_cnt=0;
     while(1){
@@ -674,6 +714,9 @@ INT32S ETH_CTRL_read_buffer_residual_data(unsigned short nMCB)
 
 bool checksocket_status(unsigned short nMCB)
 {
+    /* FIX: guard against empty/null slot (was bare UB) */
+    if (nMCB >= _ETH_CTRL_socket.size() || !_ETH_CTRL_socket[nMCB])
+        return false;
     struct tcp_info info;
     int leninfo = sizeof(info);
     getsockopt(_ETH_CTRL_socket[nMCB]->native_handle(), IPPROTO_TCP, TCP_INFO, &info, (socklen_t *)&leninfo);
