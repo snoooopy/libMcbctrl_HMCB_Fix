@@ -47,6 +47,15 @@ bool gbMCBTimer;
  * CMCBThread::MCBCommand+0x405 (segfault at 8) on every Reconnect. */
 static std::atomic<int>  g_onTimerActive{0};
 static std::atomic<bool> g_onTimerQuit{false};
+/* FIX v6: the same UAF exists on the command-spawn threads (INITIAL
+ * th_tmp, SETRANGE, default case), and the CLOSE wait cap (2s) is
+ * shorter than a blackout reconnect round (OnTimer -> CheckConnect
+ * -> ConnectOpen blocks ~3s per MCB) -> CLOSE deleted gpMCBThread
+ * under a running round (SIGSEGV, journal 2026-09-15 09:39:30).
+ * g_cmdActive counts in-flight command threads; g_cmdMutex makes
+ * check-quit + increment atomic against CLOSE setting the flag. */
+static std::atomic<int>  g_cmdActive{0};
+static std::mutex        g_cmdMutex;
 PFCALLBACK gCallBack =NULL;
 //extern boost::shared_mutex mutex1;
 //extern mutex _mutex;
@@ -195,11 +204,19 @@ void SetMCBCommand(WPARAM wParam, LPARAM lParam)
                     th.detach();
                 }
                 //gpMCBThread->PostThreadMessage(WM_MCBTHREAD_CMD, MCB_CMD_INITIAL, 0);
+                /* FIX v6: drop INITIAL while CLOSE drains workers; count
+                 * the command thread so CLOSE waits for it too. */
+                {
+                    std::lock_guard<std::mutex> lk(g_cmdMutex);
+                    if (g_onTimerQuit) break;
+                    ++g_cmdActive;
+                }
                 std::thread th_tmp([&]{
                    //boost::unique_lock<boost::mutex> lock(mutex1);
                     if(gpMCBThread ==NULL)
                         std::cout << " NULL NULL NULL NULL  " << std::endl;
                     gpMCBThread->MCBCommand(MCB_CMD_INITIAL, 0);
+                    --g_cmdActive;
                 });
                 th_tmp.detach();
             }
@@ -225,17 +242,33 @@ void SetMCBCommand(WPARAM wParam, LPARAM lParam)
                  * read gpMCBThread while this thread deleted it below ->
                  * NULL deref (MCBCommand+0x405, segfault at 8). */
                 gbMCBTimer =false;
-                g_onTimerQuit = true;
-                for (int i = 0; i < 200 && g_onTimerActive > 0; i++)
-                    usleep(10*1000); /* wait in-flight OnTimer round (<=2s) */
+                {
+                    std::lock_guard<std::mutex> lk(g_cmdMutex);
+                    g_onTimerQuit = true;
+                }
+                /* FIX v6: a blackout reconnect round blocks in connect()
+                 * up to ~3s per MCB, so the old 2s cap expired mid-round
+                 * and CLOSE deleted gpMCBThread under it -> SIGSEGV in
+                 * OnTimer->CheckConnect->InitialMCB_HMCB4. Wait up to 20s
+                 * for ALL workers (OnTimer rounds + command threads); on
+                 * timeout keep the object alive (small leak, no crash). */
+                for (int i = 0; i < 2000 && (g_onTimerActive + g_cmdActive) > 0; i++)
+                    usleep(10*1000); /* wait in-flight workers (<=20s) */
+                if ((g_onTimerActive + g_cmdActive) == 0)
+                {
                 gpMCBThread->MCBCommand(MCB_CMD_CLOSE, 0);
-                g_onTimerQuit = false;
                 //Sleep(200); // wait for connection close;
                 //gpMCBThread->PostThreadMessage(WM_QUIT, 0, 0); // �@��linux�汾����Ҫ���]�д��ڣ��M�̽Y�������� ssx 2023��10��17��10:50:22
                 delete gpMCBThread;
                 gpMCBThread =NULL;
                 //gCallBack =NULL;
                 usleep(400*1000); // wait for connection close;
+                }
+                else
+                {
+                    std::cout << "MCB CLOSE: worker busy, keep object alive (leak, no crash)" << std::endl;
+                }
+                g_onTimerQuit = false;
             }
 #endif
 			break;
@@ -281,8 +314,15 @@ void SetMCBCommand(WPARAM wParam, LPARAM lParam)
 #if defined(_MSC_VER) || defined(WIN64) || defined(_WIN64) || defined(__WIN64__) || defined(WIN32) || defined(_WIN32) || defined(__WIN32__) || defined(__NT__)
                 gpMCBThread->PostThreadMessage(WM_MCBTHREAD_CMD, MCB_CMD_SETRANGE, (LPARAM)(gpMCBThread->m_pMCB->m_cDMRange[nMCB]));
 #else
+                {
+                    /* FIX v6: guard like the default case */
+                    std::lock_guard<std::mutex> lk(g_cmdMutex);
+                    if (g_onTimerQuit) break;
+                    ++g_cmdActive;
+                }
                 std::thread th([=]{
                     gpMCBThread->MCBCommand(MCB_CMD_SETRANGE, (LPARAM)(gpMCBThread->m_pMCB->m_cDMRange[nMCB]));
+                    --g_cmdActive;
                 });
                 th.detach();
 #endif
@@ -338,8 +378,16 @@ void SetMCBCommand(WPARAM wParam, LPARAM lParam)
 #if defined(_MSC_VER) || defined(WIN64) || defined(_WIN64) || defined(__WIN64__) || defined(WIN32) || defined(_WIN32) || defined(__WIN32__) || defined(__NT__)
             gpMCBThread->PostThreadMessage(WM_MCBTHREAD_CMD, wParam, lParam);
 #else
+            {
+                /* FIX v6: never spawn a command thread once CLOSE started
+                 * draining workers; count it so CLOSE waits for it. */
+                std::lock_guard<std::mutex> lk(g_cmdMutex);
+                if (g_onTimerQuit) break;
+                ++g_cmdActive;
+            }
             std::thread th([=]{
                 gpMCBThread->MCBCommand(wParam, lParam);
+                --g_cmdActive;
             });
             th.detach();
 #endif
@@ -364,9 +412,13 @@ UINT MCBTimer(void * pParam)
 #if defined(_MSC_VER) || defined(WIN64) || defined(_WIN64) || defined(__WIN64__) || defined(WIN32) || defined(_WIN32) || defined(__WIN32__) || defined(__NT__)
             gpMCBThread->PostThreadMessage(WM_MCBTHREAD_TIMER, 0, 0);
 #else
+            /* FIX v6: count the round in the SPAWNING thread, before the
+             * std::thread exists. Incrementing only inside the lambda left
+             * a window: CLOSE could see active==0, delete gpMCBThread,
+             * and only then the lambda ran on freed memory. */
+            ++g_onTimerActive;
             std::thread th([=]{
                 /* FIX: never touch gpMCBThread once CLOSE started */
-                ++g_onTimerActive;
                 if (g_onTimerQuit) { --g_onTimerActive; return; }
                 gpMCBThread->MCBTimer(0,0);
                 --g_onTimerActive;
