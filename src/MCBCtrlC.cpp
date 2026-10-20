@@ -157,8 +157,14 @@ bool CMCBCtrlC::m_bThreeEnergyAcc_En;
 int CMCBCtrlC::m_nMCBNum;
 
 //
-int CMCBCtrlC::m_MCBReadySts[MAX_MCBNUM];
-int CMCBCtrlC::m_MCBRunSts[MAX_MCBNUM]; //bit 0-pre start, 1-pre stop cmd, 2-pre stop normal
+volatile MCB_LONG CMCBCtrlC::m_MCBReadySts[MAX_MCBNUM];
+volatile MCB_LONG CMCBCtrlC::m_MCBRunSts[MAX_MCBNUM]; //bit 0-pre start, 1-pre stop cmd, 2-pre stop normal
+
+// ============================================================
+// 接收/解析解耦（对照 V2.0.1.1）：每 MCB 解析上下文与初始化标志
+// ============================================================
+bool CMCBCtrlC::m_bParseCtxInited = false;
+CMCBCtrlC::MCBParseContext CMCBCtrlC::g_parseCtx[MAX_MCBNUM];
 
 //硬件序列号取值模式
 //默认为1，取实际返回包裹数序列号做硬件序列号
@@ -175,13 +181,13 @@ bool CMCBCtrlC::m_bGet0xA5Packet[MAX_MCBNUM];
 //获取到0xA5数据包前已解析出的数据包
 UINT CMCBCtrlC::m_nMiss0XA5PacketCnt[MAX_MCBNUM];
 //上一次数据采集是否成功完成标志
-bool CMCBCtrlC::m_bPreDAQSucessFlag[MAX_MCBNUM];
+volatile MCB_LONG CMCBCtrlC::m_bPreDAQSucessFlag[MAX_MCBNUM];
 
-bool CMCBCtrlC::m_bPreDataEnd =false;
-bool CMCBCtrlC::m_bPreStop =false;
-bool CMCBCtrlC::m_bStart=false;
+volatile MCB_LONG CMCBCtrlC::m_bPreDataEnd =0;
+volatile MCB_LONG CMCBCtrlC::m_bPreStop =0;
+volatile MCB_LONG CMCBCtrlC::m_bStart=0;
 //已收到停止采集命令
-bool CMCBCtrlC::m_bRecStopCmd = false;	
+volatile MCB_LONG CMCBCtrlC::m_bRecStopCmd = 0;
 	
 //UINT  CMCBCtrlC::m_nMissAA55Cnt;
 std::map<int,UINT> CMCBCtrlC::m_nMissAA55Cnt;
@@ -2006,6 +2012,37 @@ void CMCBCtrlC::InitialAllMCB()
     char tmp[512] = {0};
     //通过MCB_CMD_INITIAL消息初始化
     ////////////////////////////////////////////////////////////////
+    // ---- 初始化每 MCB 的解析上下文（对照 V2.0.1.1 InitialAllMCB）----
+    // Linux：mutex/事件无需显式创建，仅首次标记 + 每轮清状态
+    if (!m_bParseCtxInited)
+    {
+        for (i = 0; i < MAX_MCBNUM; i++)
+        {
+            AtomicStoreL(&g_parseCtx[i].bStop, 0);
+            g_parseCtx[i].totalRecvBytes   = 0;
+            g_parseCtx[i].totalParsedBytes = 0;
+            g_parseCtx[i].local.Clear();
+            g_parseCtx[i].shared.Clear();
+            g_parseCtx[i].dataEvent.clear();
+        }
+        m_bParseCtxInited = true;
+    }
+    else
+    {
+        // 二次调用只清状态
+        for (i = 0; i < MAX_MCBNUM; i++)
+        {
+            AtomicStoreL(&g_parseCtx[i].bStop, 0);
+            g_parseCtx[i].totalRecvBytes   = 0;
+            g_parseCtx[i].totalParsedBytes = 0;
+            g_parseCtx[i].local.Clear();
+
+            std::lock_guard<std::mutex> lk(g_parseCtx[i].csBuf);
+            g_parseCtx[i].shared.Clear();
+            g_parseCtx[i].dataEvent.clear();
+        }
+    }
+    ////////////////////////////////////////////////////////////////
     memset(tmp,0,512);
     sprintf(tmp,"HMCB.dll configures LOGLEVEL = %d\n", m_nLogLevel);
     sz_szInfo = tmp;
@@ -3133,6 +3170,10 @@ void CMCBCtrlC::NormalEndDAQ(unsigned short nMCB)
     m_timepreend = NucTool::GetTickCount();
     ////////////////////////////////////
     m_bStart = false;
+    /////////////////////////////////////////////////////////////////////////
+    //数据消费完之后再停解析线程（对照 V2.0.1.1 NormalEndDAQ）
+    StopParseThreads();
+    /////////////////////////////////////////////////////////////////////////
 }
 
 void CMCBCtrlC::ConnectClose(unsigned short nMCB, UINT wParam /*= 0*/)
@@ -3388,6 +3429,9 @@ void CMCBCtrlC::CloseMCB()
     sz_szInfo = "HMCB.dll calls CloseMCB().\n";
     //std::cout <<(sz_szInfo);
     WriteLogFile(sz_szInfo);
+    /////////////////////////////////////////////////////////////////////////
+    // 先停解析线程，避免它访问已关闭的 socket/缓冲（对照 V2.0.1.1 CloseMCB）
+    StopParseThreads();
     /////////////////////////////////////////////////////////////////////////
     m_bconnectauto = false;
     for(unsigned short i =0; i< m_nMCBNum; i++)
@@ -6488,8 +6532,12 @@ void CMCBCtrlC::CheckDataEnd()
         //std::cout <<(("All HMCBs normal ended receiving data successfully!\n"));
         WriteLogFile(("All HMCBs normal ended receiving data successfully!\n"));
         m_bStart = false;
+        /////////////////////////////////////////////////////////////////////////
+        //数据消费完之后再停解析线程（对照 V2.0.1.1 CheckDataEnd）
+        StopParseThreads();
+        /////////////////////////////////////////////////////////////////////////
          //
-        m_bPreStop = false;  
+        m_bPreStop = false;
 		//
         //SendMCBMsg(MCB_MSG_STATUS, MCB_STOPOK, 1);
         //
@@ -7966,7 +8014,7 @@ void CMCBCtrlC::SetNewIPAddress(unsigned char * pnNewIP, unsigned short nMCB)
     }
 }
 
-void CMCBCtrlC::WriteLogFile(std::string lpsz, UINT nLogLevel /*=0*/)
+void CMCBCtrlC::WriteLogFile(std::string lpsz, UINT nLogLevel /*=0*/, bool bFlush /*=true*/)
 {
 
 #if defined(_MSC_VER) || defined(WIN64) || defined(_WIN64) || defined(__WIN64__) || defined(WIN32) || defined(_WIN32) || defined(__WIN32__) || defined(__NT__)
@@ -8137,7 +8185,8 @@ void CMCBCtrlC::WriteLogFile(std::string lpsz, UINT nLogLevel /*=0*/)
             //m_file.seekg(0,std::ios_base::end);
         }
         m_file << (str + lpsz);
-        m_file.flush();
+        if (bFlush)
+            m_file.flush();
     }
     //若设置了日志路径,则取设置值吗，每日一个日志文件
     else
@@ -8189,7 +8238,8 @@ void CMCBCtrlC::WriteLogFile(std::string lpsz, UINT nLogLevel /*=0*/)
                 //printf("%d-%d-%d %d:%d:%d.%ld\n", 1900+t->tm_year, 1+t->tm_mon, t->tm_mday, t->tm_hour, t->tm_min, t->tm_sec, tv.tv_usec);
             sprintf(str,"%d-%02d-%02d %02d:%02d:%02d.%ld  ", 1900+t->tm_year, 1+t->tm_mon, t->tm_mday, t->tm_hour, t->tm_min, t->tm_sec, tv.tv_usec);
             m_file << (std::string(str) + lpsz);
-            m_file.flush();
+            if (bFlush)
+                m_file.flush();
         }
     }
 #endif

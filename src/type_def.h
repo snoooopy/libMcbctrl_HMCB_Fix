@@ -97,4 +97,30 @@ INT8U  CB_data[16];
 INT8U  CB_crc_code;
 }OneDBLineOnePackageStatue;
 
+// ============================================================
+// 线程安全 32 位原子访问封装
+// （移植自 V2.0.1.1 type_def.h 的 Interlocked 封装，Linux 用 GCC __atomic 内建）
+// ============================================================
+typedef long MCB_LONG;
+inline MCB_LONG AtomicLoadL(volatile MCB_LONG* p)
+{
+    return __atomic_load_n(p, __ATOMIC_SEQ_CST);
+}
+inline void AtomicStoreL(volatile MCB_LONG* p, MCB_LONG v)
+{
+    __atomic_store_n(p, v, __ATOMIC_SEQ_CST);
+}
+inline MCB_LONG AtomicOrL(volatile MCB_LONG* p, MCB_LONG mask)
+{
+    return __atomic_or_fetch(p, mask, __ATOMIC_SEQ_CST);
+}
+inline MCB_LONG AtomicAndL(volatile MCB_LONG* p, MCB_LONG mask)
+{
+    return __atomic_and_fetch(p, mask, __ATOMIC_SEQ_CST);
+}
+inline bool AtomicTestBitL(volatile MCB_LONG* p, MCB_LONG mask)
+{
+    return (AtomicLoadL(p) & mask) != 0;
+}
+
 #endif

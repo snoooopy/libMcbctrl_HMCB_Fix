@@ -115,6 +115,7 @@ Error Code:
 #define  MCB_STSCD_NOHOTPKTSTOP    (0x1211)
 #define  MCB_STSCD_NODM            (0x1300)
 #define  MCB_STSCD_NOTRIGGER       (0x1301)
+#define  MCB_STSCD_MISSAA55_ERROR  (0x1306)   // V2.0.1.1: miss 0xAA55 lead code exceeds the limit
 #define  MCB_STSCD_DMOVERFLOW      (0x1302)
 #define  MCB_STSCD_NODATA          (0x1303)
 #define  MCB_STSCD_SENDERR         (0x1304)

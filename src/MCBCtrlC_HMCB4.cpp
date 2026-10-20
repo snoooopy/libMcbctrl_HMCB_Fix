@@ -9,6 +9,7 @@
 #include <ctime>
 #include <thread>
 #include <sys/prctl.h>
+#include <sys/syscall.h>   // SYS_gettid
 #include <unistd.h>
 #include <boost/thread/mutex.hpp>
 #include <boost/thread/shared_mutex.hpp>
@@ -810,9 +811,22 @@ void CMCBCtrlC::Start_HMCB4(long lcounter)
 	////////////////////////////////////////////////////////////
 	//hMutex = CreateMutex(NULL, FALSE, NULL);
 	////////////////////////////////////////////////////////////
-    //Æô¶¯¶àÏß³Ì×¼±¸Êı¾İ½âÎö
-	//ReadParseData_HMCB4(m_lcounter);
-	//ÆÁ±Î¶àÏß³Ì£¬¸ÄÓÃµ¥Ïß³Ì½âÎöÊı¾İ
+    ///////////////////////////////////////////////////////////////
+    //å¯åŠ¨æ¯ MCB ç‹¬ç«‹è§£æçº¿ç¨‹ï¼ˆV2.0.1.1 è§£è€¦ï¼šæ¥æ”¶çº¿ç¨‹åªå…¥ç¼“å†²ï¼›æ­¤å¤„å·²åœ¨
+    //gbl_DBLine_Size è®¡ç®—ä¹‹åï¼Œä¿è¯è§£æçº¿ç¨‹è¯»åˆ°çš„åŒ…å°ºå¯¸æœ‰æ•ˆï¼‰
+    if (!StartParseThreads())
+    {
+        memset(tmp,0,512);
+        sprintf(tmp,"Old parse thread still running, cannot start new one.\n");
+        sz_szInfo = tmp;
+        WriteLogFile(sz_szInfo, gLogLevel1);
+        SendMCBMsg(MCB_MSG_STATUS, MCB_DVSTS, MCB_STSCD_STARTRUN);
+        //å›æ”¶å·²ç»å¯åŠ¨çš„è§£æçº¿ç¨‹
+        StopParseThreads();
+        //å¤±è´¥åç½®å› m_bStart=0ï¼Œä¸‹æ¬¡ Start_HMCB4 ä¸ä¼šå›  m_bStart å·²ç½®ä½è€Œæ‹’ç»
+        m_bStart = false;
+        return;
+    }
 	/////////////////////////////////////////////////////////////
 	///////////////////////////////////////////////////////////////
 	//for(i = 0; i < m_nMCBNum; i++)
@@ -2055,204 +2069,70 @@ int CMCBCtrlC::ConfigureUserParameter_HMCB4(INT8U nDbline, unsigned short nMCB/*
 	return nRet;
 }
 
-//////////////////////////////////////////////////////////////////
-//Í¨¹ısocket»ñÈ¡Êı¾İ²¢±£´æÖÁFIFO»º´æÖĞ
+////////////////////////////////////////////////////////////
+//é€šè¿‡socketè¯»å–æ•°æ®å¹¶ç¼“å­˜è‡³FIFOç¼“å†²åŒºï¼ˆV2.0.1.1 è§£è€¦ç‰ˆï¼šåªåšæ¥æ”¶ï¼Œè§£æç”±ç‹¬ç«‹çº¿ç¨‹å®Œæˆï¼‰
 void CMCBCtrlC::FetchMsg_HMCB4(CRequestSocket *pRequestSocket, int nIndex, int nPort)
 {
-    std::string sz_szInfo = ("");
-    char tmp[512] = {0};
-	memset(tmp,0,512);
-//	sprintf(tmp,"HMCB(4)%d Socket Receives data and jump in FetchMsg_HMCB4() function.\n");
-//	sz_szInfo = tmp;
-//	WriteLogFile(sz_szInfo);
-
-#if defined(_MSC_VER) || defined(WIN64) || defined(_WIN64) || defined(__WIN64__) || defined(WIN32) || defined(_WIN32) || defined(__WIN32__) || defined(__NT__)
-    EnterCriticalSection(&ics);
-    //
-    WaitForSingleObject(hMutex, INFINITE);
-#else
-    //boost::unique_lock<boost::shared_mutex> /*read_*/lock(mutex1);
-    //unique_lock<mutex> lock(_mutex);
-    unique_lock<mutex> lock(m_Data_mutex[nIndex]);
-#endif
-    //
-
-    ////////////////////////////////////////////////////////////////////////////////////////////////////
-    //Ò»´ÎÊı¾İ¶ÁÈ¡Ëù¶ÁÈ¡µÄÊı¾İ×Ö½ÚÊı
-    INT32S Rec_Bytelen = 0;
-    //MCBĞòºÅ
     int nMCB = nIndex;
-    ////////////////////////////////////////////////////////////////////////////////////////////////////
-	//Êı¾İ²É¼¯Î´Æô¶¯Ö®Ç°µÄÊı¾İ£¬²»´¦Àí
-	if(!m_bStart)
-	{
-		if(pRequestSocket->Available()>0)
-		{
-			//Rec_Bytelen = pRequestSocket->Receive(&glb_data_buf[nMCB][0], GLB_DATA_BUF_SIZE);
-			//Rec_Bytelen = pRequestSocket->Receive(&glb_data_buf[nMCB][0], GLB_DATA_BUF_SIZE);
-			unsigned char * chRecv = new unsigned char [SOCKETBUFSIZE];
-			Rec_Bytelen = pRequestSocket->Receive(chRecv, SOCKETBUFSIZE);
-			//std::vector<unsigned char> TempVector(chRecv, chRecv+Rec_Bytelen);
-			//glb_data_buf_vetor[nMCB].insert(glb_data_buf_vetor[nMCB].end(), TempVector.begin(), TempVector.end());
-			delete [] chRecv;
-			//
-			glb_data_buf_vetor[nMCB].clear();
-			m_timeSocketRecData[nMCB] =NucTool::GetTickCount();
-			//
-			glb_data_AccWrBytes[nMCB] = 0;
-			m_SocketRecBytes[nMCB] = 0;
-			m_TimeSaveSocketData[nMCB] = NucTool::GetTickCount();
-			//#if defined(_MSC_VER) || defined(WIN64) || defined(_WIN64) || defined(__WIN64__) || defined(WIN32) || defined(_WIN32) || defined(__WIN32__) || defined(__NT__)
-			//        ReleaseMutex(hMutex);
-			//#else
-			//        lock.unlock();
-			//#endif
-			memset(tmp,0,512);
-			sprintf(tmp,"HMCB(4)%d Socket Receives data before [Start], with a return data length and total receive data length are : %d / %I64u \n", nMCB, Rec_Bytelen, glb_data_AccWrBytes[nMCB] );
-			sz_szInfo = tmp;
-			WriteLogFile(sz_szInfo, gLogLevel2);
-		}
-		lock.unlock();
-		return;
-	}
-    //glb_data_buf_vetor[nMCB].clear();
-    ////////////////////////////////////////////////////////////////////////////////////////////////////
-    //Êı¾İ»º´æÇø¿ÉÒÔĞ´µÄ×Ö½Ú³¤¶È
-    INT32U buf_WR_EmptyLength = 0;
-    INT32U buf_WR_Pt = 0;
-    //
-    ULONGLONG buffDataLength = 0;
-    //À´×ÔÊı¾İ¶Ë¿ÚµÄÊı¾İ
-    if(nPort == ETH_DATA_PORT)
+    // ---- åªå¤„ç†æ•°æ®ç«¯å£çš„æ•°æ® ----
+    if (nPort != ETH_DATA_PORT)
+        return;
+    // ---- æœªå¼€å§‹é‡‡é›†æ—¶ï¼Œsocket æ”¶åˆ°çš„æ•°æ®ç›´æ¥ä¸¢å¼ƒ ----
+    //ï¼ˆç¼“å†²æ¸…ç©ºç»Ÿä¸€åœ¨ Start_HMCB4 æ—¶åšï¼›æ®‹ç•™æ•°æ®ä¸ä¼šè¿›å…¥è§£æçº¿ç¨‹çš„å¾…å¤„ç†ç¼“å†²ï¼‰
+    if (AtomicLoadL(&m_bStart) == 0)
     {
-        buf_WR_Pt = gbl_data_buf_wraddr[nMCB] % GLB_DATA_BUF_SIZE;
-        buf_WR_EmptyLength = GLB_DATA_BUF_SIZE - buf_WR_Pt;
-        //´Ósocket½ÓÊÕÊı¾İ·Åµ½»º´æÇø
-        if(nMCB ==1)
-        {
-            int n=0;
-        }
-		//´Ósocket½ÓÊÕÊı¾İ·Åµ½»º´æÇø
+        unsigned char chDummy[SOCKETBUFSIZE];
+        pRequestSocket->Receive(chDummy, SOCKETBUFSIZE);
+        m_timeSocketRecData[nMCB] = NucTool::GetTickCount();
+        return;
+    }
 
-		if(pRequestSocket->Available()>0)
-		{
-			//Rec_Bytelen = pRequestSocket->Receive(&glb_data_buf[nMCB][buf_WR_Pt], buf_WR_EmptyLength);
-			//´Ósocket½ÓÊÕÊı¾İ·Åµ½»º´æÇø
-			unsigned char * chRecv = new unsigned char [SOCKETBUFSIZE];
-			Rec_Bytelen = pRequestSocket->Receive(chRecv, SOCKETBUFSIZE);
-			if(Rec_Bytelen > 0)
-			{
-				std::vector<unsigned char> TempVector(chRecv, chRecv+Rec_Bytelen);
-				glb_data_buf_vetor[nMCB].insert(glb_data_buf_vetor[nMCB].end(), TempVector.begin(), TempVector.end());
-				//int nsize = glb_data_buf_vetor[nMCB].size();
-				//int n=0;
-				m_timeSocketRecData[nMCB] = NucTool::GetTickCount();
-				//
-				buffDataLength = glb_data_buf_vetor[nMCB].size();
-				//»º´æÇøÄÚÓĞ´óÓÚµÈÓÚ2´Î´¥·¢µÄÎ´´¦ÀíÊı¾İ
-				if(buffDataLength >= 2*gbl_MCBTotal_Size[nMCB])
-				{
-					memset(tmp,0,512);
-					sprintf(tmp,"HMCB(4)%d Socket Received data Length=%d and go to analysis.\n", nMCB, buffDataLength );
-					sz_szInfo = tmp;
-					WriteLogFile(sz_szInfo, gLogLevel1);
-					//
-					RECVPARAM *pRecvParam0 = new RECVPARAM;
-					pRecvParam0->nMCBIndex = nMCB;
-					pRecvParam0->nDBLineEnNum = m_DMInfo[nMCB].nDBLineEnNum;
-					pRecvParam0->pkg_num = m_lcounter;
-                    ETH_read_and_parse_dataEx_Thread_HMCB4((void*) pRecvParam0);
-				}
-			}
-            delete [] chRecv;
-		}
+    // ---- æ¥æ”¶çƒ­è·¯å¾„ï¼šåªåš recv + Append + signalï¼Œæœ€çŸ­ä¸´ç•ŒåŒº ----
+    unsigned char chRecv[SOCKETBUFSIZE];
+    INT32S Rec_Bytelen = pRequestSocket->Receive(chRecv, SOCKETBUFSIZE);
+    if (Rec_Bytelen <= 0)
+        return;
 
+    // ---- Append + è®¡æ•° + signal æ”¾åœ¨åŒä¸€ä¸´ç•ŒåŒºï¼Œé¿å…ä¸¢å¤±å”¤é†’ ----
+    //ï¼ˆæ‰‹åŠ¨é‡ç½®äº‹ä»¶ï¼šsignal åä¿æŒä¿¡å·æ€ï¼Œç”±è§£æçº¿ç¨‹æ¶ˆè´¹å clearï¼‰
+    {
+        std::lock_guard<std::mutex> lk(g_parseCtx[nMCB].csBuf);
+        g_parseCtx[nMCB].shared.Append(chRecv, (size_t)Rec_Bytelen);
+        g_parseCtx[nMCB].totalRecvBytes += (unsigned long long)Rec_Bytelen;
+        g_parseCtx[nMCB].dataEvent.signal();
+    }
 
-
-//        std::cout << " buf_WR_Pt : " << buf_WR_Pt << std::endl;
-//        for(int i=0;i<16;i++)
-//        {
-//            std::cout << " FetchMsg_HMCB4 : " << std::hex << (int)(&glb_data_buf[nMCB][buf_WR_Pt])[i] << "  ";
-//        }
-//        std::cout << std::dec << std::endl;
-
-        if(Rec_Bytelen <= 0)
-        {
-            memset(tmp,0,512);
-            sprintf(tmp,"Error when calling socket Receive() by HMCB%d. The return value is : %d \n", nMCB, Rec_Bytelen);
-            sz_szInfo = tmp;
-            //WriteLogFile(sz_szInfo);
-           // lock.unlock();
-            return;
-        }
-        else if(Rec_Bytelen > 0)
-        {
-//            gbl_data_buf_wraddr[nMCB] = (buf_WR_Pt + Rec_Bytelen) % GLB_DATA_BUF_SIZE;
-//            glb_data_AccWrBytes[nMCB] += Rec_Bytelen;
-            if(gLogLevel2 <= m_nLogLevel)
-            {
-                memset(tmp,0,512);
-                sprintf(tmp,"HMCB(4)%d socket Received data successfully. The lengths of returned data and total received data are : %d / %I64u \n", nMCB, Rec_Bytelen, glb_data_AccWrBytes[nMCB] );
-                sz_szInfo = tmp;
-                WriteLogFile(sz_szInfo, gLogLevel2);
-            }
-            //
-            INT32S nWr = 0;
-            std::string strTemp = ("");
-            sz_szInfo = ("");
-            if((0 == nMCB) && (m_bSocketRawDatafile) && (m_nLogLevel >= gLogLevel5))
-            {
-                //±£´æÔ­Ê¼Êı¾İµ½
-                for(nWr = 0; nWr < Rec_Bytelen; nWr++)
-                {
-                    memset(tmp,0,512);
-                    sprintf(tmp,"%02X ", glb_data_buf_vetor[nMCB].at(glb_data_buf_vetor[nMCB].back()-Rec_Bytelen+nWr));
-                    strTemp = tmp;
-                    //
-                    m_unSocketRawWrCnt++;
-                    if(0 == (m_unSocketRawWrCnt % 64))
-                    {
-                        strTemp += ("\n");
-                    }
-                    sz_szInfo += strTemp;
-                }
-#if defined(_MSC_VER) || defined(WIN64) || defined(_WIN64) || defined(__WIN64__) || defined(WIN32) || defined(_WIN32) || defined(__WIN32__) || defined(__NT__)
-                m_SocketRawDatafile.WriteString(sz_szInfo);
-                m_SocketRawDatafile.Flush();
-#else
-                m_SocketRawDatafile<<sz_szInfo;
-                m_SocketRawDatafile.flush();
-#endif
-            }
-        }
-        /////////////////////////////////////////////////////
-        if(m_nLogLevel > gLogLevel1)
-        {
-            m_SocketRecBytes[nMCB] += Rec_Bytelen;
-            //
-            DWORD dwTemp_Timenow = NucTool::GetTickCount();
-            DWORD dwLapTick = dwTemp_Timenow - m_TimeSaveSocketData[nMCB];
-            if(dwLapTick > 1000)
-            {
-                memset(tmp,0,512);
-                sprintf(tmp,"HMCB(4)%d the lengths of returned data and band width: %I64u bytes / %d Bytes/s\n", nMCB, glb_data_AccWrBytes[nMCB], (int)(m_SocketRecBytes[nMCB]*1000.0/dwLapTick));
-                sz_szInfo = tmp;
-                WriteLogFile(sz_szInfo, gLogLevel2);
-                //
-                m_SocketRecBytes[nMCB] = 0;
-                //
-                m_TimeSaveSocketData[nMCB] = dwTemp_Timenow;
-            }
+    // ---- è¯Šæ–­ï¼ˆHMCB_LIB_DEBUG=1ï¼‰ï¼šæ¥æ”¶ä¾§æ¯ç§’ç»Ÿè®¡ ----
+    static unsigned s_dbgRecvCnt = 0; static unsigned long long s_dbgRecvBytes = 0;
+    static DWORD s_dbgRecvT0 = 0;
+    if (getenv("HMCB_LIB_DEBUG")) {
+        s_dbgRecvCnt++; s_dbgRecvBytes += (unsigned long long)Rec_Bytelen;
+        DWORD now = NucTool::GetTickCount();
+        if (s_dbgRecvT0 == 0) s_dbgRecvT0 = now;
+        if (now - s_dbgRecvT0 >= 1000) {
+            fprintf(stderr, "[libdbg][recv] cnt=%u bytes=%llu start=%ld stop=%ld\n",
+                    s_dbgRecvCnt, s_dbgRecvBytes, (long)AtomicLoadL(&m_bStart), (long)AtomicLoadL(&m_bPreStop));
+            s_dbgRecvCnt = 0; s_dbgRecvBytes = 0; s_dbgRecvT0 = now;
         }
     }
-    //////////////////////////////////////////////////////////////////
-#if defined(_MSC_VER) || defined(WIN64) || defined(_WIN64) || defined(__WIN64__) || defined(WIN32) || defined(_WIN32) || defined(__WIN32__) || defined(__NT__)
-    ReleaseMutex(hMutex);
-    //
-    LeaveCriticalSection(&ics);
-#else
-    lock.unlock();
-#endif
+    m_timeSocketRecData[nMCB] = NucTool::GetTickCount();
+
+    // ---- ä¿å­˜åŸå§‹socketæ•°æ®è®°å½•ï¼ˆLevel5 è°ƒè¯•ç”¨ï¼›ä¸åšæ¯ç¬” Flush é™ä½å¼€é”€ï¼‰----
+    if ((0 == nMCB) && m_bSocketRawDatafile && (m_nLogLevel >= gLogLevel5))
+    {
+        std::string sz_szInfo = ("");
+        char tmp[16] = {0};
+        for (INT32S nWr = 0; nWr < Rec_Bytelen; nWr++)
+        {
+            memset(tmp,0,16);
+            sprintf(tmp,"%02X ", chRecv[nWr]);
+            m_unSocketRawWrCnt++;
+            if (0 == (m_unSocketRawWrCnt % 64))
+                strcat(tmp, "\n");
+            sz_szInfo += tmp;
+        }
+        m_SocketRawDatafile << sz_szInfo;
+    }
 }
 
 //////////////////////////////////////////////////////////////////
@@ -2369,841 +2249,867 @@ void CMCBCtrlC::ReadParseData_HMCB4(ULONG pkg_num)
 }
 
 //////////////////////////////////////////////////////////////////
+// ============================================================
+// V2.0.1.1 æ¥æ”¶/è§£æè§£è€¦æ”¹é€ ï¼šåŸ"æ¥æ”¶+è§£æ"ä¸€ä½“çº¿ç¨‹é€€å½¹ï¼Œ
+// è§£æå·¥ä½œç”± StartParseThreads() å¯åŠ¨çš„æ¯ MCB ç‹¬ç«‹è§£æçº¿ç¨‹å®Œæˆã€‚
+// ä¿ç•™å…¥å£ä»¥å…¼å®¹æ—§è°ƒç”¨ç‚¹ï¼ˆReadParseData_HMCB4ï¼‰ï¼Œä¸å†æ‰¿æ‹…è§£æã€‚
+// ============================================================
 #if defined(_MSC_VER) || defined(WIN64) || defined(_WIN64) || defined(__WIN64__) || defined(WIN32) || defined(_WIN32) || defined(__WIN32__) || defined(__NT__)
 DWORD WINAPI CMCBCtrlC::ETH_read_and_parse_dataEx_Thread_HMCB4(LPVOID lpParameter)
 #else
 DWORD  CMCBCtrlC::ETH_read_and_parse_dataEx_Thread_HMCB4(void * lpParameter)
 #endif
 {
-	std::string  sz_szInfo = ("");
-	char tmp[512] = {0};
-	//¶ÔÓ¦µÄMCBË÷Òı
-	INT8U nMCB = ((RECVPARAM *)lpParameter)->nMCBIndex;
-	UINT nDBLineEnNum = ((RECVPARAM *)lpParameter)->nDBLineEnNum;
-	if((nDBLineEnNum < 1) || (nDBLineEnNum > 4))
-	{
-		nDBLineEnNum = 1;
-	}
-	UINT nMaxDBLindIndex = nDBLineEnNum - 1;
-	//Ò»´Î²É¼¯ĞèÒª»ñÈ¡µÄ´¥·¢Êı¾İ°üÊıÁ¿
-	//0:ÎŞÏŞ°üÊı
-	//>0:ĞèÒªÄ¿±ê°üÊı
-	ULONG nTarget_pkg_num = ((RECVPARAM *)lpParameter)->pkg_num;
+    std::string sz_szInfo = ("");
+    //å‚æ•°å†…å­˜æŒ‰æ—§å¥‘çº¦ç”±æœ¬å…¥å£è´Ÿè´£é‡Šæ”¾
+    if (lpParameter != NULL) { delete (RECVPARAM *)lpParameter; lpParameter = NULL; }
+    sz_szInfo = "ETH_read_and_parse_dataEx_Thread_HMCB4 retired; parsing moved to MCBParseThreadProc.\n";
+    WriteLogFile(sz_szInfo, gLogLevel2);
+    return 0;
+}
 
-	memset(tmp,0,512);
-//	sprintf(tmp," ETH_read_and_parse_dataEx_Thread_HMCB4 : nTarget_pkg_num is %d . \n", nTarget_pkg_num);
-//	sz_szInfo = tmp;
-//	WriteLogFile(sz_szInfo);
+// ============================================================
+// è§£æçº¿ç¨‹ä¸»ä½“ï¼ˆå¯¹ç…§ V2.0.1.1 MCBParseThreadProcï¼‰
+// ç­‰æ•°æ®äº‹ä»¶ â†’ å…±äº«ç¼“å†²æ•´ä½“æ¬åˆ°ç§æœ‰ local â†’ æ— é”è§£æå®Œæ•´åŒ…å¹¶å›è°ƒ App
+// ============================================================
+void CMCBCtrlC::MCBParseThreadProc(int nMCB)
+{
+    if ((nMCB < 0) || (nMCB >= MAX_MCBNUM))
+        return;
 
-	delete lpParameter;
-	//
-	if(nMCB >= MAX_MCBNUM )
-	{
-		memset(tmp,0,512);
-		sprintf(tmp,"HMCB(4) Index Parameter of ETH_read_and_parse_dataEx_Thread function is %d, bigger than MAX_MCBNUM = %d. \n", nMCB, MAX_MCBNUM);
-		sz_szInfo = tmp;
-		WriteLogFile(sz_szInfo);
-		return 0;
-	}
-	////////////////////////////////////////////////////////////////////////////////////////////////////
-	//memset(tmp,0,512);
-	//sprintf(tmp,"Enter HMCB(4)%d ETH_read_and_parse_dataEx_Thread.\n", nMCB);
-	//sz_szInfo = tmp;
-	//WriteLogFile(sz_szInfo);
-	////////////////////////////////////////////////////////////////////////////////////////////////////
-	INT32S i = 0;
-	////////////////////////////////////////////////////////////////////////////////////////////////////
-	//¿ªÊ¼Êı¾İ½âÎö
-	ULONGLONG buffDataLength = 0;
-	//
-	OneDBLineOnePackage pDBDataPackage;
-	//
-	INT32U rdAddr0, rdAddr1, rdAddr2, rdAddr3, rdAddr4, rdAddr5, rdAddr6, rdAddr7, rdAddr8, rdAddr9, rdAddr10;
-	INT8U  buf_data, buf_data1, buf_data2, buf_data3, buf_data4, buf_data5, buf_data6, buf_data7, buf_data8, buf_data9, buf_data10;
-	//
-	////////////////////////////////////////////////////////////////////////////////////////////////////
-	INT16U SC_pkg_lead_code = 0;  //Òıµ¼Âë0xAA 0x55
-	INT8U  SC_pkg_rev = 0x00;//±£Áô×Ö½Ú
-	INT32U SC_pkg_len = 0;//Êı¾İ°ü×Ü³¤¶È3×Ö½Ú
-	INT8U  SC_pkg_db_line = 0;//DB line index(0~3)
-	INT8U  SC_pkg_type = 0;	//CMD codeÀàĞÍ
-	INT16U SC_pkg_index = 0;//Êı¾İ°ü±àºÅ
-	////////////////////////////////////////////////////////////////////////////////////////////////////
-	INT8U DB_board_index = 0;
-	INT8U Max_DB_board_index = 0;
-	INT8U overall_err = 0;	//×Ü´íÎó
-	////////////////////////////////////////////////////////////////////////////////////////////////////
-	INT8U  xB_pkg_type  = 0;//Êı¾İ°üÀàĞÍ
-	INT16U xB_pkg_size = 0;//Êı¾İ°ü³¤¶ÈµÍ8Î»+¸ß4Î»
-	INT8U  xB_pkg_index  = 0;//Êı¾İ°ü±àºÅ
-	INT8U  xB_pkg_board_i  = 0;//Ì½²âÆ÷°å±àºÅ(CB or DB°å)
-	INT8U  xB_pkg_logic_err1  = 0;//¿ØÖÆ½Ó¿ÚÂß¼­×´Ì¬
-	INT8U  xB_pkg_logic_err2  = 0;//ÆäËûÂß¼­×´Ì¬
-	INT8U  xB_pkg_sel = DB_PKG_PARSE_SEL; //±íÊ¾µ±Ç°½âÎöµÄÊÇDB»¹ÊÇCBÊı¾İ°ü¡£
-	//´íÎó¼ì²é
-	INT8U pkg_parse_err = 0;	//Êı¾İ°ü½âÎö´íÎó£¬·ÇFPGAÂß¼­´íÎó¡£Ò»µ©³öÏÖ¸ÃÀàĞÍ´íÎó£¬ÖØÖÃ½âÎö×´Ì¬»ú¡£
-	INT8U pkg_data_err = 0;		//°ü½âÎöÕı³££¬µ«·¢ÏÖ°üÄÚÈİÓĞÒ»Ğ©Òì³£
-	////////////////////////////////////////////////////////////////////////////////////////////////////
-	INT8U  parse_mode = PM_START; //Êı¾İ°ü½âÎö×´Ì¬
-	INT32U nHeadBytes = 10;//Êı¾İ°üÍ·×Ö½ÚÊı
-	INT32U nxB_DataPackBytes = 0;//CB or DB°ü×Ö½ÚÊı
-	////////////////////////////////////////////////////////////////////////////////////////////////////
-	bool tB1 = true;
-	//²É¼¯ÒÑ¿ªÊ¼»ò ½âÎö½áÊø
-	if(m_bStart)
-		//while((m_bStart))
-	{
-		//¶ÔÓÚ¶¨°üÊı²É¼¯£¬Èç¹ûËùÓĞ¿ØÖÆºĞ½âÎöµÄ°üÊıÁ¿´ïµ½Ä¿±ê£¬Ôò×Ô¶¯·¢Í£Ö¹²É¼¯ÃüÁî
-		if(nTarget_pkg_num > 0)
-		{
-			tB1 = true;
-			for (i = 0; i < m_nMCBNum; i++)
-			{
-				//ÈÎÒâÒ»¸ö¿ØÖÆºĞÃ»ÓĞ²Éµ½×ã¹»Êı¾İ£¬Ôò²»×Ô¶¯Í£Ö¹
-				if(parsed_pkg_n[i] < nTarget_pkg_num)
-				{
-					tB1 = false;
-				}
-			}
-			if((tB1) && (!m_bPreStop))
-			{
-				memset(tmp,0,512);
-				sprintf(tmp,"HMCB0(4) has collected %d data and will stop(1) data acquisition.\n", parsed_pkg_n[0]);
-				sz_szInfo = tmp;
-				WriteLogFile(sz_szInfo);
-				//
-				Stop(1,nMCB);
-				//break;
-                return 0;
-			}
-		}
-		////////////////////////////////////////////////////////////////////////////////////////////////////
-        ////////////////////////////////////////////////////////////////////////////////////////////////////
-#if defined(_MSC_VER) || defined(WIN64) || defined(_WIN64) || defined(__WIN64__) || defined(WIN32) || defined(_WIN32) || defined(__WIN32__) || defined(__NT__)
-        WaitForSingleObject(hMutex, INFINITE);
-#else \
-    // todo ssx 2023Äê10ÔÂ13ÈÕ17:29:04
-     // unique_lock<mutex> lock(m_Data_mutex[nMCB]);
-#endif
-		////////////////////////////////////////////////////////////////////////////////////////////////////
-		//×Ü½ÓÊÕÊı¾İ×Ö½ÚÊı¶àÓÚ×Ü¶Á³ö´¦Àí×Ö½ÚÊı£¬´æÔÚÎ´´¦Àí×Ö½Ú
-		//if(glb_data_AccWrBytes[nMCB] > glb_data_AccRdBytes[nMCB])
-		//{
-		//	buffDataLength = glb_data_AccWrBytes[nMCB] - glb_data_AccRdBytes[nMCB];
-		//}
-		//else
-		//{
-		//	buffDataLength = 0;
-		//}
-		buffDataLength = glb_data_buf_vetor[nMCB].size();
-		////////////////////////////////////////////////////////////////////////////////////////////////////
-		//sz_szInfo.Format(_T("Enter MCB%d ETH_read_and_parse_dataEx_Thread. glb_data_AccWrBytes[nMCB]= %I64u; glb_data_AccRdBytes[nMCB]=%I64u; and buffDataLength = %I64u;\n"), 
-		//	nMCB, glb_data_AccWrBytes[nMCB], glb_data_AccRdBytes[nMCB], buffDataLength);
-		//WriteLogFile(sz_szInfo, gLogLevel2);
-		////////////////////////////////////////////////////////////////////////////////////////////////////
-		//»º´æÇøÄÚÓĞ´óÓÚµÈÓÚÒ»´Î´¥·¢µÄÎ´´¦ÀíÊı¾İ
-		//while(buffDataLength >= gbl_DBLine_Size[nMCB][0])
-		while(buffDataLength >= 2*gbl_MCBTotal_Size[nMCB])
-		{
-			////////////////////////////////////////////////////////////////////////////////////////////////////
-			//¶ÔÓÚ¶¨°üÊı²É¼¯£¬Èç¹û¿ØÖÆºĞ½âÎöµÄ°üÊıÁ¿´ïµ½Ä¿±ê£¬ÔòÍ£Ö¹¼ÌĞø½âÎöÊı¾İ
-			if(nTarget_pkg_num > 0)
-			{
-				//ÈÎÒâÒ»¸ö¿ØÖÆºĞÃ»ÓĞ²Éµ½×ã¹»Êı¾İ£¬Ôò²»×Ô¶¯Í£Ö¹
-				if(parsed_pkg_n[nMCB] >= nTarget_pkg_num)
-				{
-					glb_data_buf_vetor[nMCB].clear();//Çå¿Õµ±Ç°µÄvectorÀïÃæÊı¾İ
-					buffDataLength = glb_data_buf_vetor[nMCB].size();
-					break;
-				}
-			}
-			////////////////////////////////////////////////////////////////////////////////////////////////////
-			//pDBDataPackageÊı¾İÇå0
-			memset(&pDBDataPackage, 0, sizeof(pDBDataPackage));
-			//Ã¿´ÎÊı¾İ½âÎöÆğÊ¼µØÖ·
-			i = 0;
-			buf_data1 = 0; buf_data2 = 0; buf_data3 = 0; buf_data4 = 0; buf_data5 = 0; buf_data6 = 0; buf_data7 = 0; buf_data8 = 0; buf_data9 = 0; buf_data10 = 0; 
-			//
-			buffDataLength = glb_data_buf_vetor[nMCB].size();
-			if(buffDataLength < gbl_MCBTotal_Size[nMCB])
-			{
-				memset(tmp,0,512);
-				sprintf(tmp,"HMCB%d(4) has not enough data for analysis and then the process interruption.[glb_data_buf_vetor[nMCB].size()=%d].\n", nMCB, buffDataLength);
-				sz_szInfo = tmp;
-				WriteLogFile(sz_szInfo);
-				break;
-			}
-			//////////////////////////////////////////////////////////////////////////////////////////////
-			if(buffDataLength > (i+10))
-			{
-				buf_data1 = glb_data_buf_vetor[nMCB].at(i++);
-				buf_data2 = glb_data_buf_vetor[nMCB].at(i++);
-				buf_data3 = glb_data_buf_vetor[nMCB].at(i++);//reserve±£Áô, Ôİ²¹Áã
-				buf_data4 = glb_data_buf_vetor[nMCB].at(i++);//Êı¾İ°ü×Ü³¤¶È(¸ß8Î»)
-				buf_data5 = glb_data_buf_vetor[nMCB].at(i++);//Êı¾İ°ü×Ü³¤¶È(ÖĞ8Î»)
-				buf_data6 = glb_data_buf_vetor[nMCB].at(i++);//Êı¾İ°ü×Ü³¤¶È(µÍ8Î»)
-				buf_data7 = glb_data_buf_vetor[nMCB].at(i++);//DB line index(0~3)
-				buf_data8 = glb_data_buf_vetor[nMCB].at(i++);//CMD code
-				buf_data9 = glb_data_buf_vetor[nMCB].at(i++);//Êı¾İ°ü±àºÅ(¸ß8Î»)
-				buf_data10 = glb_data_buf_vetor[nMCB].at(i++);//Êı¾İ°ü±àºÅ(µÍ8Î»)
-			}
-			else
-			{
-				memset(tmp,0,512);
-				sprintf(tmp,"HMCB%d(4) has not enough data for analysis and then the process interruption.[glb_data_buf_vetor[nMCB].size()=%d].\n", nMCB, buffDataLength);
-				sz_szInfo = tmp;
-				WriteLogFile(sz_szInfo);
-				break;
-			}
-			////Ã¿´ÎÊı¾İ½âÎöÆğÊ¼µØÖ·
-			//rdAddr0 = gbl_data_buf_rdaddr[nMCB] % GLB_DATA_BUF_SIZE;
-			////
-			//rdAddr1 = rdAddr0;
-			//rdAddr2 = (rdAddr1 + 1) % GLB_DATA_BUF_SIZE;
-			////rdAddr3 = (rdAddr1 + 2) % GLB_DATA_BUF_SIZE;//reserve±£Áô, Ôİ²¹Áã
-			//rdAddr4 = (rdAddr1 + 3) % GLB_DATA_BUF_SIZE;
-			//rdAddr5 = (rdAddr1 + 4) % GLB_DATA_BUF_SIZE;
-			//rdAddr6 = (rdAddr1 + 5) % GLB_DATA_BUF_SIZE;
-			//rdAddr7 = (rdAddr1 + 6) % GLB_DATA_BUF_SIZE;
-			//rdAddr8 = (rdAddr1 + 7) % GLB_DATA_BUF_SIZE;
-			//rdAddr9 = (rdAddr1 + 8) % GLB_DATA_BUF_SIZE;
-			//rdAddr10 = (rdAddr1 + 9) % GLB_DATA_BUF_SIZE;
-			//////////////////////////////////////////////////////////////////////////////////////////////////////
-			//buf_data1 = glb_data_buf[nMCB][rdAddr1];
-			//buf_data2 = glb_data_buf[nMCB][rdAddr2];
-			////buf_data3 = glb_data_buf[rdAddr3];//reserve±£Áô, Ôİ²¹Áã
-			//buf_data4 = glb_data_buf[nMCB][rdAddr4];//Êı¾İ°ü×Ü³¤¶È(¸ß8Î»)
-			//buf_data5 = glb_data_buf[nMCB][rdAddr5];//Êı¾İ°ü×Ü³¤¶È(ÖĞ8Î»)
-			//buf_data6 = glb_data_buf[nMCB][rdAddr6];//Êı¾İ°ü×Ü³¤¶È(µÍ8Î»)
-			//buf_data7 = glb_data_buf[nMCB][rdAddr7];//DB line index(0~3)
-			//buf_data8 = glb_data_buf[nMCB][rdAddr8];//CMD code
-			//buf_data9 = glb_data_buf[nMCB][rdAddr9];//Êı¾İ°ü±àºÅ(¸ß8Î»)
-			//buf_data10 = glb_data_buf[nMCB][rdAddr10];//Êı¾İ°ü±àºÅ(µÍ8Î»)
-			//Òıµ¼Âë0xAA 0x55
-			SC_pkg_lead_code = (buf_data1<<8) + buf_data2;
-			//Êı¾İ°ü×Ü³¤¶È3×Ö½Ú
-			SC_pkg_len = (buf_data4<<16) + (buf_data5<<8) + (buf_data6);
-			//DB line index(0~3)
-			SC_pkg_db_line = buf_data7;
-			//ÓĞĞ§ĞÔÅĞ¶Ï
-			SC_pkg_db_line = (SC_pkg_db_line < (MAX_DBLINENUM - 1)) ? SC_pkg_db_line : (MAX_DBLINENUM - 1);
-			//if((SC_pkg_db_line < 0) || (SC_pkg_db_line > 3))
-			//{
-			//	SC_pkg_db_line = 0;
-			//}
-			//CMD codeÀàĞÍ
-			SC_pkg_type = buf_data8;
-			//Êı¾İ°ü±àºÅ
-			SC_pkg_index = (buf_data9<<8) + (buf_data10);
-			//////////////////////////////////////////////////////////////
-			//Êı¾İ°üÍ·ÕıÈ·ĞÔÅĞ¶Ï
-			//¿ªÊ¼½âÎöÒ»¸öSCÊı¾İ°ü
-			if(0xAA55 != SC_pkg_lead_code)
-			{
-				//10000´Î½âÎö´íÎ»´òÓ¡Ò»Ìõ¼ÇÂ¼
-				m_nMissAA55Cnt[nMCB]++;
-				if(1 == (m_nMissAA55Cnt[nMCB] % 10000))
-				{
-					//m_nMissAA55Cnt = 0;
-					memset(tmp,0,512);
-					sprintf(tmp,"Not find SC_PKG_LEAD_CODE(0xAA55) when PM_GET_SC_PKG_HEADER with MCB%d-DB%d.\n", nMCB, SC_pkg_db_line);
-					sz_szInfo = tmp;
-					WriteLogFile(sz_szInfo);
-				}
-				if(m_nMissAA55Cnt[nMCB] > 65535*2)
-				{
-#if defined(_MSC_VER) || defined(WIN64) || defined(_WIN64) || defined(__WIN64__) || defined(WIN32) || defined(_WIN32) || defined(__WIN32__) || defined(__NT__)
-					ReleaseMutex(hMutex);
-					//////////////////////////////////////////////////////////////////
-					LeaveCriticalSection(&ics);
-					//////////////////////////////////////////////////////////////////
-#else
+    MCBParseContext& ctx = g_parseCtx[nMCB];
 
-#endif
-					//ReleaseMutex(hMutex);
-					//lock.unlock();
-					//////////////////////////////////////////////////////////////////
-					//LeaveCriticalSection(&ics);
-					//////////////////////////////////////////////////////////////////
-					memset(tmp,0,512);
-					sprintf(tmp,"Not find SC_PKG_LEAD_CODE(0xAA55) more than 65535*2 times and Exit HMCB(4)%d ETH_read_and_parse_dataEx_Thread.\n", nMCB);
-					sz_szInfo = tmp;
-					WriteLogFile(sz_szInfo);
-					//////////////////////////////////////////////////////////////////
-					//ÉÏÒ»´ÎÊı¾İ²É¼¯ÊÇ·ñ³É¹¦Íê³É±êÖ¾£ºÊ§°Ü
-					m_bPreDAQSucessFlag[nMCB] = false;
-					//////////////////////////////////////////////////////////////////
-                    std::this_thread::sleep_for(std::chrono::milliseconds(1));
-					// lock.unlock();
-					return 0;
-				}
-				//////////////////////////////////////////////////////////////
-				//Êı¾İ¸ñÊ½²»¶Ô£¬Êı¾İÖ¸ÕëÇ°ÒÆÒ»Î»
-				glb_data_buf_vetor[nMCB].erase(glb_data_buf_vetor[nMCB].begin(), glb_data_buf_vetor[nMCB].begin()+1);
-				buffDataLength = glb_data_buf_vetor[nMCB].size();
-				//
-				//gbl_data_buf_rdaddr[nMCB] = (rdAddr0 + 1) % GLB_DATA_BUF_SIZE;
-				//glb_data_AccRdBytes[nMCB] += 1;
-				//if(glb_data_AccWrBytes[nMCB] > glb_data_AccRdBytes[nMCB])
-				//{
-				//	buffDataLength = glb_data_AccWrBytes[nMCB] - glb_data_AccRdBytes[nMCB];
-				//}
-				//else
-				//{
-				//	buffDataLength = 0;
-				//}
-				//////////////////////////////////////////////////////////////
-				continue;
-			}
-			//CMD code Óë Êı¾İ°ü×Ü³¤¶È³¤¶ÈÅĞ¶Ï
-			else if((DB_DAQ_PKG != SC_pkg_type) || (SC_pkg_len != gbl_DBLine_Size[nMCB][SC_pkg_db_line]))
-			{
-				memset(tmp,0,512);
-				sprintf(tmp,"Get Error when parse PM_GET_SC_PKG_HEADER data of HMCB(4)%d DB%d, return data length is : %d, need data length is %d. \n", nMCB, SC_pkg_db_line, SC_pkg_len, gbl_DBLine_Size[nMCB][SC_pkg_db_line]);
-				sz_szInfo = tmp;
-				WriteLogFile(sz_szInfo, gLogLevel2);
-				//////////////////////////////////////////////////////////////
-				//Êı¾İ¸ñÊ½²»¶Ô£¬Êı¾İÖ¸ÕëÇ°ÒÆÒ»Î»
-				glb_data_buf_vetor[nMCB].erase(glb_data_buf_vetor[nMCB].begin(), glb_data_buf_vetor[nMCB].begin()+1);
-				buffDataLength = glb_data_buf_vetor[nMCB].size();
-				//gbl_data_buf_rdaddr[nMCB] = (rdAddr0 + 1) % GLB_DATA_BUF_SIZE;
-				//glb_data_AccRdBytes[nMCB] += 1;
-				//if(glb_data_AccWrBytes[nMCB] > glb_data_AccRdBytes[nMCB])
-				//{
-				//	buffDataLength = glb_data_AccWrBytes[nMCB] - glb_data_AccRdBytes[nMCB];
-				//}
-				//else
-				//{
-				//	buffDataLength = 0;
-				//}
-				//////////////////////////////////////////////////////////////
-				continue;
-			}
-			//ÕıÈ·ÕÒµ½Êı¾İ°üÍ·
-			else
-			{
-				//Ò»Ö¡Êı¾İÍ·
-				pDBDataPackage.nMCB = nMCB;
-				pDBDataPackage.DB_line_i = SC_pkg_db_line;
-				pDBDataPackage.rx_DB_line_i = SC_pkg_db_line;
-				pDBDataPackage.SC_pkg_type = SC_pkg_type;
-				pDBDataPackage.SC_pkg_index = SC_pkg_index;
-				////////////////////////////////////////////////////
-				//¶ÁÈ¡Õû¸öSC°üÊı¾İµÄÔØºÉ
-				//ÕıÈ·½âÎö³öÊı¾İÍ·£¬Êı¾İÖ¸ÕëÇ°ÒÆ10×Ö½Ú
-				nHeadBytes = 10;
-				glb_data_buf_vetor[nMCB].erase(glb_data_buf_vetor[nMCB].begin(), glb_data_buf_vetor[nMCB].begin()+nHeadBytes);
-				buffDataLength = glb_data_buf_vetor[nMCB].size();
+    std::string sz_szInfo = ("");
+    char tmp[512] = {0};
+    memset(tmp,0,512);
+    sprintf(tmp,"HMCB(4)%d parse thread started, tid=%ld.\n", nMCB, (long)syscall(SYS_gettid));
+    sz_szInfo = tmp;
+    WriteLogFile(sz_szInfo);
 
-				//gbl_data_buf_rdaddr[nMCB] = (rdAddr0 + nHeadBytes) % GLB_DATA_BUF_SIZE;
-				//glb_data_AccRdBytes[nMCB] += nHeadBytes;
-				//if(glb_data_AccWrBytes[nMCB] > glb_data_AccRdBytes[nMCB])
-				//{
-				//	buffDataLength = glb_data_AccWrBytes[nMCB] - glb_data_AccRdBytes[nMCB];
-				//}
-				//else
-				//{
-				//	buffDataLength = 0;
-				//}
-				//////////////////////////////////////////////////////////////
-				//rdAddr0 = gbl_data_buf_rdaddr[nMCB];
-				rdAddr0 = 0;
-				nxB_DataPackBytes = 0;
-				parse_mode = PM_GET_XB_DATA;
-				//
-				while(PM_GET_XB_DATA == parse_mode)
-				{
-					//¿ªÊ¼½âÎöÒ»¸öDB°å »ò ×îºóCB°å µÄData°ü
-					pkg_parse_err = 0;
-					//
-					rdAddr1 = rdAddr0;
-					//xB_pkg_type  = glb_data_buf[nMCB][rdAddr1 % GLB_DATA_BUF_SIZE];//Êı¾İ°üÀàĞÍ
-					xB_pkg_type  = glb_data_buf_vetor[nMCB].at(rdAddr1);
-					//
-					rdAddr1++;
-					//xB_pkg_size = glb_data_buf[nMCB][rdAddr1 % GLB_DATA_BUF_SIZE];//Êı¾İ°ü³¤¶ÈµÍ8Î»
-					xB_pkg_size  = glb_data_buf_vetor[nMCB].at(rdAddr1);
-					//
-					rdAddr1++;
-					//buf_data = glb_data_buf[nMCB][rdAddr1 % GLB_DATA_BUF_SIZE];//(¸ß4bitÊı¾İ°ü±àºÅ+µÍ4bitÊı¾İ³¤¶È¸ß4Î»)
-					buf_data  = glb_data_buf_vetor[nMCB].at(rdAddr1);
-					//
-					xB_pkg_size = ((buf_data&0x0F)<<8) + xB_pkg_size;//Êı¾İ°ü³¤¶ÈµÍ8Î»+¸ß4Î»
-					xB_pkg_index  = (buf_data&0xF0)>>4;//Êı¾İ°ü±àºÅ
-					//
-					rdAddr1++;
-					//xB_pkg_board_i = glb_data_buf[nMCB][rdAddr1 % GLB_DATA_BUF_SIZE];//Ì½²âÆ÷°å±àºÅ(CB or DB°å)
-					xB_pkg_board_i  = glb_data_buf_vetor[nMCB].at(rdAddr1);
-					xB_pkg_board_i  = min((int)xB_pkg_board_i, (MAX_MCBADNUM-1));
-					//
-					rdAddr1++;
-					//xB_pkg_logic_err1 = glb_data_buf[nMCB][rdAddr1 % GLB_DATA_BUF_SIZE]; //¿ØÖÆ½Ó¿ÚÂß¼­×´Ì¬
-					xB_pkg_logic_err1  = glb_data_buf_vetor[nMCB].at(rdAddr1);
-					//
-					rdAddr1++;
-					//xB_pkg_logic_err2 = glb_data_buf[nMCB][rdAddr1 % GLB_DATA_BUF_SIZE]; //ÆäËûÂß¼­×´Ì¬
-					xB_pkg_logic_err2  = glb_data_buf_vetor[nMCB].at(rdAddr1);
-					/////////////////////////////////////////////////////////////////////
-					//°üÀàĞÍ
-					if ((xB_pkg_type == DB_ERR_PKG) || (xB_pkg_type == SC_pkg_type))
-					{
-						xB_pkg_sel = DB_PKG_PARSE_SEL; //±íÊ¾µ±Ç°½âÎöµÄÊÇDB»¹ÊÇCBÊı¾İ°ü
-						parse_mode = PM_GET_XB_DATA;
-						/////////////////////////////////////////
-						//±£´æ×îºóÒ»´Î½âÎöµÄDBÊı¾İ°üÇ°6¸ö×Ö½Ú
-						/////////////////////////////////////////
-					}
-					else if (xB_pkg_type == CB_PKG)//CB°ü
-					{
-						xB_pkg_sel = CB_PKG_PARSE_SEL;//±íÊ¾µ±Ç°½âÎöµÄÊÇDB»¹ÊÇCBÊı¾İ°ü
-						parse_mode = PM_GET_XB_DATA;
-						//
-
-					}
-					else
-					{
-						xB_pkg_sel = UNKNOWN_PKG_PARSE_SEL;	
-						parse_mode = PM_GET_SUB_PKG_HEADER;
-						//////////////////////////////////////////////////////////////
-						//Êı¾İ¸ñÊ½²»¶Ô£¬Êı¾İÖ¸ÕëÇ°ÒÆÒ»Î»
-						glb_data_buf_vetor[nMCB].erase(glb_data_buf_vetor[nMCB].begin(), glb_data_buf_vetor[nMCB].begin()+1);
-						buffDataLength = glb_data_buf_vetor[nMCB].size();
-						//gbl_data_buf_rdaddr[nMCB] = (rdAddr0 + 1) % GLB_DATA_BUF_SIZE;
-						//rdAddr0 = gbl_data_buf_rdaddr[nMCB];
-						//glb_data_AccRdBytes[nMCB] += 1;
-						////
-						//if(glb_data_AccWrBytes[nMCB] > glb_data_AccRdBytes[nMCB])
-						//{
-						//	buffDataLength = glb_data_AccWrBytes[nMCB] - glb_data_AccRdBytes[nMCB];
-						//}
-						//else
-						//{
-						//	buffDataLength = 0;
-						//}
-						//
-						parse_mode = PM_START;
-						//////////////////////////////////////////////////////////////
-						break;
-					}
-					/////////////////////////////////////////////////////////////////////
-					//DBÊı¾İ°ü(DBµ¥°åµ¥ÃüÁîÖ´ĞĞ·µ»ØµÄÊı¾İ°ü)
-					if(DB_PKG_PARSE_SEL == xB_pkg_sel)//DB°ü
-					{
-						DB_board_index = xB_pkg_board_i;
-						pDBDataPackage.DB_pkg_type[DB_board_index] = xB_pkg_type;
-						pDBDataPackage.DB_pkg_index[DB_board_index] = xB_pkg_index;
-						pDBDataPackage.DB_board_index[DB_board_index] = DB_board_index;
-						Max_DB_board_index = (Max_DB_board_index > DB_board_index) ? Max_DB_board_index : DB_board_index; 
-						pDBDataPackage.Max_DB_board = Max_DB_board_index + 1;//DBÊıÁ¿(1¸öÆğ)
-						pDBDataPackage.DB_logic_err1[DB_board_index] = xB_pkg_logic_err1;
-						pDBDataPackage.DB_logic_err2[DB_board_index] = xB_pkg_logic_err2;
-						pDBDataPackage.DB_data_len[DB_board_index] = xB_pkg_size;
-						//
-						for(i = 0; i < min(4096, (int)xB_pkg_size); i++)
-						{
-							rdAddr1++;
-							//pDBDataPackage.DB_data[DB_board_index][i] = glb_data_buf[nMCB][rdAddr1 % GLB_DATA_BUF_SIZE];
-							pDBDataPackage.DB_data[DB_board_index][i] = glb_data_buf_vetor[nMCB].at(rdAddr1);
-						}
-						//Ğ£ÑéÂë£ºCRC-8£¬¶Ô°üÖĞËùÓĞÊı¾İ½øĞĞĞ£Ñé
-						rdAddr1++;
-						//pDBDataPackage.DB_crc_code[DB_board_index] = glb_data_buf[nMCB][rdAddr1 % GLB_DATA_BUF_SIZE];
-						pDBDataPackage.DB_crc_code[DB_board_index] = glb_data_buf_vetor[nMCB].at(rdAddr1);
-						//Ò»¸öDB°üsize = 6×Ö½ÚÍ·+ xB_pkg_size¸öÊı¾İ+1¸öCRC
-						nxB_DataPackBytes = 6 + xB_pkg_size + 1;
-						//////////////////////////////////////////////////////////////
-						//Êı¾İ¸ñÊ½¶Ô£¬Êı¾İÖ¸ÕëÇ°ÒÆÒ»¸ö°ü×Ö½ÚÊı
-						glb_data_buf_vetor[nMCB].erase(glb_data_buf_vetor[nMCB].begin(), glb_data_buf_vetor[nMCB].begin() + nxB_DataPackBytes);
-						buffDataLength = glb_data_buf_vetor[nMCB].size();
-						//gbl_data_buf_rdaddr[nMCB] = (rdAddr0 + nxB_DataPackBytes) % GLB_DATA_BUF_SIZE;
-						//rdAddr0 = gbl_data_buf_rdaddr[nMCB];
-						//glb_data_AccRdBytes[nMCB] += nxB_DataPackBytes;
-						////
-						//if(glb_data_AccWrBytes[nMCB] > glb_data_AccRdBytes[nMCB])
-						//{
-						//	buffDataLength = glb_data_AccWrBytes[nMCB] - glb_data_AccRdBytes[nMCB];
-						//}
-						//else
-						//{
-						//	buffDataLength = 0;
-						//}
-						//////////////////////////////////////////////////////////////
-					}
-					//CBÊı¾İ°ü(CBµ¥°åµ¥ÃüÁîÖ´ĞĞ·µ»ØµÄÊı¾İ°ü)
-					else if(CB_PKG_PARSE_SEL == xB_pkg_sel)
-					{
-						pDBDataPackage.CB_pkg_type = xB_pkg_type;
-						pDBDataPackage.CB_pkg_index = xB_pkg_index;
-						pDBDataPackage.CB_board_index = xB_pkg_board_i;
-						pDBDataPackage.CB_data_len = xB_pkg_size;
-						pDBDataPackage.CB_logic_err1 = xB_pkg_logic_err1;
-						pDBDataPackage.CB_logic_err2 = xB_pkg_logic_err2;
-						//CB°ü ¿½±´CB DataÊı¾İ£¨12×Ö½Ú£©
-						//12¸ö×Ö½Ú CB DataÊı¾İ
-						//Data 0£¨DB line¶ÀÁ¢£©£º¸ß4Î»´«ÊäSDCLK²É¼¯´íÎóÀàĞÍ£¬µÍ4Î»´«ÊäSDCLK²É¼¯¿í¶È¡£
-						//Data 1£¨DB line¶ÀÁ¢£©£ºÏµÍ³Éè¼Æ±£Áô¡£
-						//Data 2£º¸ß4Î»ÒÑÓÃÓÚ´«ÊäDDI£»µÍ4Î»±£Áô£¬È«Îª0¡£ÏµÍ³±£Áô¡£
-						//Data 3£ºÏµÍ³Éè¼Æ±£Áô¡£
-						//Data 4¡«11: Áô¸øÓÃ»§Ê¹ÓÃ¡£
-						for(i = 0; i < min(16, (int)xB_pkg_size); i++)
-						{
-							rdAddr1++;
-							//pDBDataPackage.CB_data[i] = glb_data_buf[nMCB][rdAddr1 % GLB_DATA_BUF_SIZE];
-							pDBDataPackage.CB_data[i] = glb_data_buf_vetor[nMCB].at(rdAddr1);
-						}
-						//Ğ£ÑéÂë£ºCRC-8£¬¶Ô°üÖĞËùÓĞÊı¾İ½øĞĞĞ£Ñé
-						rdAddr1++;
-						//pDBDataPackage.CB_crc_code = glb_data_buf[nMCB][rdAddr1 % GLB_DATA_BUF_SIZE];
-						pDBDataPackage.CB_crc_code = glb_data_buf_vetor[nMCB].at(rdAddr1);
-						//Ò»¸öCB°üsize = 6×Ö½ÚÍ·+ xB_pkg_size¸öÊı¾İ+1¸öCRC
-						nxB_DataPackBytes = 6 + xB_pkg_size + 1;
-						//////////////////////////////////////////////////////////////
-						//Êı¾İ¸ñÊ½¶Ô£¬Êı¾İÖ¸ÕëÇ°ÒÆÒ»¸ö°ü×Ö½ÚÊı
-						glb_data_buf_vetor[nMCB].erase(glb_data_buf_vetor[nMCB].begin(), glb_data_buf_vetor[nMCB].begin() + nxB_DataPackBytes);
-						buffDataLength = glb_data_buf_vetor[nMCB].size();
-						//gbl_data_buf_rdaddr[nMCB] = (rdAddr0 + nxB_DataPackBytes) % GLB_DATA_BUF_SIZE;
-						//rdAddr0 = gbl_data_buf_rdaddr[nMCB];
-						//glb_data_AccRdBytes[nMCB] += nxB_DataPackBytes;
-						////
-						//////////////////////////////////////////////////////////////////////////////////////////////////////
-						//if(glb_data_AccWrBytes[nMCB] > glb_data_AccRdBytes[nMCB])
-						//{
-						//	buffDataLength = glb_data_AccWrBytes[nMCB] - glb_data_AccRdBytes[nMCB];
-						//}
-						//else
-						//{
-						//	buffDataLength = 0;
-						//}
-						////////////////////////////////////////////////////////////////////////////////////////////////////
-						////////////////////////////////////////////////////////////////////////////////////////////////////
-						//´ıÈ·ÈÏ
-						//sz_szInfo.Format(_T("At end trigger_%d data analyse of HMCB(4)%d, gbl_data_buf_rdaddr[nMCB] = %d, glb_data_AccWrBytes[nMCB]= %I64u, glb_data_AccRdBytes[nMCB]=%I64u,  buffDataLength = %I64u\n"),
-						//	pDBDataPackage.SC_pkg_index, nMCB, gbl_data_buf_rdaddr[nMCB], glb_data_AccWrBytes[nMCB], glb_data_AccRdBytes[nMCB], buffDataLength);
-						//WriteLogFile(sz_szInfo, gLogLevel2);
-						////////////////////////////////////////////////////////////////////////////////////////////////////
-						//Ö´ĞĞµ½ÕâÀï£¬ËµÃ÷½âÎöÍêÒ»¸öÊı¾İ°ü
-						parse_mode = PM_START;
-						////////////////////////////////////////////////////////////////////////////////////////////////////
-						////////////////////////////////////////////////////////////////////////////////////////////////////
-						//Íê³ÉÒ»´Îdb0µÄ½âÎö£¬ÕıÈ·½âÎöµÄÊı¾İ°ü¸öÊıµİÔö1
-						if(nMaxDBLindIndex == pDBDataPackage.DB_line_i) 
-						{
-							parsed_pkg_n[nMCB]++;//ÒÑ¾­ÕıÈ·½âÎöµÄÊı¾İ°ü¸öÊıµİÔö1
-						}
-						//»ñÈ¡±£´æÃ¿Ò»¸öHMCB(4) DB0 ·µ»ØµÄµÚÒ»¸öÊı¾İ°ü
-						//if(1 == parsed_pkg_n[nMCB])
-						if((1 == parsed_pkg_n[nMCB]) && (nMaxDBLindIndex == pDBDataPackage.DB_line_i))
-						{
-							SC_1st_pkg_index[nMCB] = pDBDataPackage.SC_pkg_index;
-							////Ã¿Ò»¸öDB Line·µ»ØµÄµÚÒ»¸öÊı¾İ°üÄÚ´¥·¢¼ÆÊı
-							SC_1st_pkg_TriggCnt[nMCB] = (pDBDataPackage.CB_data[8]<<24)+(pDBDataPackage.CB_data[9]<<16)+(pDBDataPackage.CB_data[10]<<8)+(pDBDataPackage.CB_data[11]);// CountPos & CountNeg(16bit + 16bit)
-						}
-						////////////////////////////////////////////////////////////////////////////////////////////////////
-						//Ã¿Ò»¸öHMCB(4)·µ»ØµÄµ±Ç°Êı¾İ°üË÷Òı(ÒÑ¿¼ÂÇÊı¾İ°üÒç³öÖØĞÂ¼ÆÊı)
-						//¿ØÖÆºĞ·µ»ØÊı¾İ°ü±àºÅ2¸ö×Ö½Ú:0~65535
-						//Íê³ÉÒ»´Îdb0µÄ½âÎö
-						if( nMaxDBLindIndex == pDBDataPackage.DB_line_i) 
-						{
-							//Ã¿Ò»¸öDB Line·µ»ØµÄµ±Ç°Êı¾İ°üË÷Òı(ÒÑ¿¼ÂÇÊı¾İ°üÒç³öÖØĞÂ¼ÆÊı)
-							SC_current_pkg_index[nMCB] += (pDBDataPackage.SC_pkg_index + 65536 - SC_pre_pkg_index[nMCB]) % 65536;
-							//
-							SC_pre_pkg_index[nMCB] = pDBDataPackage.SC_pkg_index;
-							//¿ØÖÆ°å·µ»ØµÄÓ²¼ş´¥·¢Êı
-							pDBDataPackage.SC_pkg_index = SC_current_pkg_index[nMCB] - SC_1st_pkg_index[nMCB] + 1;
-							////////////////////////////////////////////////////////////////////////////////////
-							//ÅĞ¶Ï½âÎöºóµÄÇ°6¸öÍ¨µÀÊı¾İ£¬ÈôÎª0xA5ÔòÅĞ¶ÏÎª±¾´Î²É¼¯µÄÊ×¸öÊı¾İ°ü
-							//Ê×¸öÊı¾İ°ü¶ªÆú£¬ºóĞøÊı¾İ°üÕı³£ÉÏ´«
-							if( (0xA5 == pDBDataPackage.DB_data[0][0]) && 
-								(0xA5 == pDBDataPackage.DB_data[0][1]) && 
-								(0xA5 == pDBDataPackage.DB_data[0][2]) && 
-								(0xA5 == pDBDataPackage.DB_data[0][3]) && 
-								(0xA5 == pDBDataPackage.DB_data[0][4]) && 
-								(0xA5 == pDBDataPackage.DB_data[0][5]))
-							{
-								parsed_pkg_n[nMCB] = 0;//ÒÑ¾­½âÎöµÄÊı¾İ°ü¸öÊı
-								Update_pkg_n[nMCB] = 0;//ÒÑ¾­½âÎöÇÒ·¢ËÍApp¸üĞÂµÄÊı¾İ°ü¸öÊı
-								SC_1st_pkg_index[nMCB] = 0;//Ã¿Ò»¸öDB Line·µ»ØµÄµÚÒ»¸öÊı¾İ°ü
-								//
-								SC_1st_pkg_TriggCnt[nMCB] = 0;//Ã¿Ò»¸öDB Line·µ»ØµÄµÚÒ»¸öÊı¾İ°üÄÚ´¥·¢¼ÆÊı
-								//SC_Current_pkg_TriggCnt[i] = 0;//Ã¿Ò»¸öDB Line·µ»ØµÄµ±Ç°Êı¾İ°üÄÚ´¥·¢¼ÆÊı
-								//
-								SC_pre_pkg_index[nMCB] = 0;//Ã¿Ò»¸öDB Line·µ»ØµÄÇ°Ò»¸öÊı¾İ°üË÷Òı
-								SC_current_pkg_index[nMCB] = 0;//Ã¿Ò»¸öDB Line·µ»ØµÄµ±Ç°Êı¾İ°üË÷Òı
-								//
-								////////////////////////////////////////////////////////////////////////////////////////////////////
-								memset(tmp,0,512);
-								sprintf(tmp,"Get 0xA5 data packet from HMCB(4)%d DB%d. \n", nMCB, SC_pkg_db_line);
-								sz_szInfo = tmp;
-								WriteLogFile(sz_szInfo);
-								//
-								//ÊÇ·ñÒÑ»ñÈ¡µ½¿ªÊ¼µÄ0xA5Êı¾İ°ü
-								m_bGet0xA5Packet[nMCB] = true;
-							}
-							//
-							if(!m_bGet0xA5Packet[nMCB])
-							{
-								//»ñÈ¡µ½0xA5Êı¾İ°üÇ°ÒÑ½âÎö³öµÄÊı¾İ°ü
-								m_nMiss0XA5PacketCnt[nMCB]++;
-								if(1 == (m_nMiss0XA5PacketCnt[nMCB] % 100))
-								{
-									memset(tmp,0,512);
-									sprintf(tmp,"HMCB(4)%d DB0 has received %d packets, but has not received 0xA5 packets.\n", nMCB, m_nMiss0XA5PacketCnt[nMCB]);
-									sz_szInfo = tmp;
-									WriteLogFile(sz_szInfo);
-								}
-							}
-						}
-						////////////////////////////////////////////////////////////////////////////////////
-						//ÊÇ·ñÒªÇó»ñÈ¡¿ªÊ¼µÄ0xA5Êı¾İ°ü,Ä¬ÈÏÎªĞèÒª»ñÈ¡
-						if(!m_bNeedGet0xA5)
-						{
-							m_bGet0xA5Packet[nMCB] = true;
-						}
-						//parsed_pkg_n : 1´ÎÈ¡ÊıÖĞÈí¼ş´¥·¢¼ÆÊı£¬´Ó0¿ªÊ¼
-						//Ç°Ãæ(INVALID_DATA_PACKET_NUM - m_nDiscardNum[nMCB])¸ö´¥·¢ÉáÆú£¬²»´«Êı¾İ¸øAPP
-						//if((m_bGet0xA5Packet[nMCB]) && ((parsed_pkg_n[nMCB] + m_nDiscardNum[nMCB]) > INVALID_DATA_PACKET_NUM))
-						//2025.09.18 Õë¶Ô¶à¶Ë¿ÚµÚÒ»´Î²É¼¯Êı¾İÒì³£ÎÊÌâĞŞ¸Ä
-						if((m_bGet0xA5Packet[nMCB]) && ((parsed_pkg_n[nMCB] + m_nDiscardNum[nMCB]) >= INVALID_DATA_PACKET_NUM))
-						//if((parsed_pkg_n[nMCB] > (INVALID_DATA_PACKET_NUM - m_nDiscardNum[nMCB])))
-						{
-							//¾­µ÷ÊÔ£¬·¢ÏÖµÚ1¸ö(ĞòºÅ0)Êı¾İ°üÊı¾İ²»È«
-							//Ô­ÒòÊÇÊı¾İ°ü½âÎö×îºóÒ»¸öDBºó£¬parsed_pkg_n[nMCB]Ôö1£¬Âú×ã´ËifÌõ¼ş£¬µ÷ÓÃUpdateOnePacketDataToApp_HMCB4(&pDBDataPackage);
-							//µ«´ËÊ±³ı×îºóÒ»¸öDBµÄÊı¾İ»á½âÎö±£´æÍâ£¬ÆäËûDBÊı¾İ¶¼Ã»ÓĞ½âÎö±£´æ£¬Òò´ËÕâÊ±ĞèÒª×èÖ¹µ÷ÓÃUpdateOnePacketDataToApp_HMCB4(&pDBDataPackage)
-							//Ìõ¼ş:µ±Ìõ¼ş(parsed_pkg_n[nMCB] + m_nDiscardNum[nMCB]) == INVALID_DATA_PACKET_NUMÊ±£¬Óöµ½×îºóÒ»¸öDBÊı¾İ£¬²»ÔÙÍùÏÂÖ´ĞĞ
-							//±£Ö¤Ìõ¼ş(parsed_pkg_n[nMCB] + m_nDiscardNum[nMCB]) > INVALID_DATA_PACKET_NUMÊ±£¬ËùÓĞDBµÄÊı¾İ¾ùÒÑ¸üĞÂ
-							if((parsed_pkg_n[nMCB] + m_nDiscardNum[nMCB]) == INVALID_DATA_PACKET_NUM)
-							{								
-								//Ò»¸öCB°åµÄ×îºóÒ»¸öDBÊı¾İ¸üĞÂºó£¬Êı¾İ°ü¹üÊı²ÅÔö1
-								if( nMaxDBLindIndex == pDBDataPackage.DB_line_i)
-								{
-									////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-									//2024-01-08????????????????????????????????????????????????????????????
-									////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-									//Êı¾İ°üÒì³££¬µ«Ğè¸üĞÂ°üÍ·Êı¾İ
-									UINT nError_DI = ((~pDBDataPackage.CB_data[2])& 0xF0)<<4;//????????;//Data 2????4??????????DDI
-									if(m_bGoudang_S4)
-									{
-										nError_DI = (nError_DI & 0x0B00) + ((nError_DI&0x0200)<< 1);//????????????????????????
-									}
-									//??????????????????????
-									long nPulseCounter = 0;
-									if(m_bHEorCXMode)
-									{
-										//????
-										nPulseCounter = (pDBDataPackage.CB_data[8]<<24)+(pDBDataPackage.CB_data[9]<<16)+(pDBDataPackage.CB_data[10]<<8)+(pDBDataPackage.CB_data[11]);
-										nPulseCounter = nPulseCounter - SC_1st_pkg_TriggCnt[nMCB] - INVALID_DATA_PACKET_NUM + m_nDiscardNum[nMCB] + 1;
-									}
-									else
-									{
-										//????
-										nPulseCounter = pDBDataPackage.SC_pkg_index;
-										nPulseCounter = nPulseCounter - INVALID_DATA_PACKET_NUM;
-									}
-									//
-									m_MCBDataHeadTmp[nMCB].head_use.scounter = pDBDataPackage.nSocketCounter;//nSocketCounter;	// socket packet serial number, self-add//????????????,1????
-									m_MCBDataHeadTmp[nMCB].head_use.pcounter.l = nPulseCounter;//nPulseCounter;	// pulse trigger number//??????????????????????
-									//m_MCBDataHeadTmp[nMCB].head_use.accEnergy = ((nError_DI&0x0200) ==0) ? 1 : 0;// acc energy sign
-									//2024.11.04¸ù¾İµ÷ÊÔ·´À¡£¬¸ßÄÜÊ±¸øÈí¼şÄÜÁ¿Ö¸Ê¾ĞÅºÅÎª0£¬Õı³£Ó¦¸ÃÎª1£¬¹Ê¸ÄÎªÏÂÃæÂß¼­
-									m_MCBDataHeadTmp[nMCB].head_use.accEnergy = ((nError_DI&0x0200) ==0) ? 0 : 1;// acc energy sign
-									///////////////////////////////////////////////////////////////////
-									UINT nDI3 = ((nError_DI&0x0800) == 0) ? 0 : 1;// acc energy sign
-									UINT nDI1 = ((nError_DI&0x0200) == 0) ? 0 : 1;// acc energy sign
-									//ÊÊÅäÈıÄÜ¼ÓËÙÆ÷£¨DI(3)Îª¸ß£¬ÔòÎª0.7MeV£¬·ñÔòÎª¸ßµÍÄÜ£©
-									if(m_bThreeEnergyAcc_En)
-									{
-										if((0 == nDI3) && (0 == nDI1)) //00³¬µÍ
-										{
-											m_MCBDataHeadTmp[nMCB].head_use.accEnergy = 2;
-										}
-										else if((0 == nDI3) && (1 == nDI1)) //01³¬µÍ
-										{
-											m_MCBDataHeadTmp[nMCB].head_use.accEnergy = 2;
-										}
-										else if((1 == nDI3) && (0 == nDI1))//10µÍÄÜ
-										{
-											m_MCBDataHeadTmp[nMCB].head_use.accEnergy = 0;
-										}
-										else//11¸ßÄÜ
-										{
-											m_MCBDataHeadTmp[nMCB].head_use.accEnergy = 1;
-										}
-									}
-									////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-									//CB??????????????12????????????,12????????
-									//Data 0??DB line??????????4??????SDCLK????????????????4??????SDCLK??????????
-									//Data 1??DB line??????????????????????
-									//Data 2????4????????????DDI????4????????????0????????????
-									//Data 3????????????????
-									//Data 4??11: ??????????????
-									//m_MCBDataHeadTmp[nMCB].d_head.head_use.ain0.ul =		(pDBDataPackage.CB_data[4]<<24)+(pDBDataPackage.CB_data[5]<<16)+(pDBDataPackage.CB_data[6]<<8)+(pDBDataPackage.CB_data[7]);// 24bit ADC??(????24bit + 8Bit (0x07))
-									m_MCBDataHeadTmp[nMCB].head_use.ain0.ul =		(pDBDataPackage.CB_data[4]<<16)+(pDBDataPackage.CB_data[5]<<8)+(pDBDataPackage.CB_data[6]);//24bit ADC??(????24bit + 8Bit (0x07))
-									m_MCBDataHeadTmp[nMCB].head_use.ptsmdata_h =	(pDBDataPackage.CB_data[0]<<24)+(pDBDataPackage.CB_data[1]<<16)+(pDBDataPackage.CB_data[2]<<8)+(pDBDataPackage.CB_data[3]);// ????0??3??????????
-									//m_MCBDataHeadTmp[nMCB].d_head.head_use.ptsmdata_l =	(pDBDataPackage.CB_data[8]<<24)+(pDBDataPackage.CB_data[9]<<16)+(pDBDataPackage.CB_data[10]<<8)+(pDBDataPackage.CB_data[11]);// CountPos(32bit)
-									m_MCBDataHeadTmp[nMCB].head_use.ptsmdata_l = nPulseCounter + INVALID_DATA_PACKET_NUM;
-									//
-									m_MCBDataHeadTmp[nMCB].head_use.ain1.ul = 0;				// ain1 data(UINT)
-									m_MCBDataHeadTmp[nMCB].head_use.sscnt = Update_pkg_n[nMCB];	//nPulseCounter + INVALID_DATA_PACKET_NUM;		// socket packet serial number, from packet
-									m_MCBDataHeadTmp[nMCB].head_use.regError_DI = nError_DI;
-
-									continue;
-								}
-							}
-							//
-							pDBDataPackage.ADFormat_Bit = m_nADBit;
-							pDBDataPackage.nSocketCounter = parsed_pkg_n[nMCB] - INVALID_DATA_PACKET_NUM + m_nDiscardNum[nMCB];//Èí¼ş°ü¹ü¼ÆÊı,1¿ªÊ¼;
-							//Èí¼ş°ü¹ü¼ÆÊı,1¿ªÊ¼;
-							if(pDBDataPackage.nSocketCounter < 1)
-								pDBDataPackage.nSocketCounter = 1;
-							///////////////////////////////////////////////////////////////////////////
-							pDBDataPackage.overall_err = overall_err;
-							////////////////////////////////////////////////////////////////////////////////////////////////////
-							//Ö»ÓĞµ±DB´æÔÚÇÒµÚÒ»¸öDBÓĞDAQÊı¾İ°ü£¬²ÅÍùÓ¦ÓÃ³ÌĞò·¢ËÍÊı¾İ¸üĞÂÏûÏ¢
-							if((pDBDataPackage.Max_DB_board > 0) && (DB_DAQ_PKG == pDBDataPackage.DB_pkg_type[0]))
-							{
-								////////////////////////////////////////////////////////////////////////////////////////////////////
-								memset(tmp,0,512);
-								sprintf(tmp,"HMCB(4)%d DB%d Update One Packet Data (No. %d) To App.\n", nMCB, SC_pkg_db_line, Update_pkg_n[nMCB]);
-								sz_szInfo = tmp;
-								//WriteLogFile(sz_szInfo);
-								WriteLogFile(sz_szInfo, gLogLevel2);
-								////////////////////////////////////////////////////////////////////////////////////////////////////
-								//2025.09.17 for Debug
-								if( 1 == m_bDebug)
-								{
-									//´òÓ¡Ç°5´Î²É¼¯µÄÇ°¼¸¸öÍ¨µÀÊı¾İ
-									if(Update_pkg_n[nMCB] < 5)
-									{
-										////////////////////////////////////////////////////////////////////////////////////////////////////
-										memset(tmp,0,512);
-										sprintf(tmp,"HMCB(4)%d DB%d- The first 5 bytes data of the %d Packet are: 0x%02X, 0x%02X, 0x%02X, 0x%02X, 0x%02X.\n", nMCB, SC_pkg_db_line, Update_pkg_n[nMCB], pDBDataPackage.DB_data[0][0], pDBDataPackage.DB_data[0][1], pDBDataPackage.DB_data[0][2], pDBDataPackage.DB_data[0][3], pDBDataPackage.DB_data[0][4]);
-										sz_szInfo = tmp;
-										//WriteLogFile(sz_szInfo);
-										WriteLogFile(sz_szInfo);
-										////////////////////////////////////////////////////////////////////////////////////////////////////
-									}
-								}
-								////////////////////////////////////////////////////////////////////////////////////////////////////
-								//2024.05.14 Ç°Ãæ¼¸´Î²É¼¯£¬Ö÷¿ØÖÆºĞµÄ¹³îõĞÅºÅÇ¿ÖÆÖÃ0
-								if((nMCB == 0) && (Update_pkg_n[nMCB]< 2))
-								{
-									//pDBDataPackage.CB_data[2] = pDBDataPackage.CB_data[2] & 0xBF;//CB_data[2]£º¸ß4Î»ÓÃÓÚ´«ÊäDDI£¨¸ßÎ»-µÍÎ»ÒÀ´ÎÎªDI3,DI2DI1,DI0£¬¶ÔÓ¦±¸ÓÃ-¹³îõ-¸ßµÍÄÜ-´¥·¢
-									//DIÊÇ·´Âß¼­£¬ÖÃ0ĞèÒªĞ´1
-									pDBDataPackage.CB_data[2] = pDBDataPackage.CB_data[2] | 0x40;//CB_data[2]£º¸ß4Î»ÓÃÓÚ´«ÊäDDI£¨¸ßÎ»-µÍÎ»ÒÀ´ÎÎªDI3,DI2DI1,DI0£¬¶ÔÓ¦±¸ÓÃ-¹³îõ-¸ßµÍÄÜ-´¥·¢
-								}
-								////////////////////////////////////////////////////////////////////////////////////////////////////
-								UpdateOnePacketDataToApp_HMCB4(&pDBDataPackage);
-								//Ò»¸öCB°åµÄ×îºóÒ»¸öDBÊı¾İ¸üĞÂºó£¬Êı¾İ°ü¹üÊı²ÅÔö1
-								if( nMaxDBLindIndex == pDBDataPackage.DB_line_i)
-								{
-									Update_pkg_n[nMCB]++;
-								}
-								////////////////////////////////////////////////////////////////////////////////////////////////////
-								//ÕıÈ·½âÎöÒ»°üÊı¾İºó£¬m_nMissAA55Cnt¼ÆÊıÇåÁã
-								m_nMissAA55Cnt[nMCB] = 0;
-								//Êı¾İ²É¼¯ÊÇ·ñ³É¹¦Íê³É±êÖ¾
-								m_bPreDAQSucessFlag[nMCB] = true;
-							}
-						}
-						//??????????????m_bAdjAinDi??1??????adjust AIN DI...
-						else
-						{
-							////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-							//2024-01-08????????????????????????????????????????????????????????????
-							////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-							UINT nError_DI = ((~pDBDataPackage.CB_data[2])& 0xF0)<<4;//????????;//Data 2????4??????????DDI
-							if(m_bGoudang_S4)
-							{
-								nError_DI = (nError_DI & 0x0B00) + ((nError_DI&0x0200)<< 1);//????????????????????????
-							}
-							//??????????????????????
-							long nPulseCounter = 0;
-							if(m_bHEorCXMode)
-							{
-								//????
-								nPulseCounter = (pDBDataPackage.CB_data[8]<<24)+(pDBDataPackage.CB_data[9]<<16)+(pDBDataPackage.CB_data[10]<<8)+(pDBDataPackage.CB_data[11]);
-								nPulseCounter = nPulseCounter - SC_1st_pkg_TriggCnt[nMCB] - INVALID_DATA_PACKET_NUM + m_nDiscardNum[nMCB] + 1;
-							}
-							else
-							{
-								//????
-								nPulseCounter = pDBDataPackage.SC_pkg_index;
-								nPulseCounter = nPulseCounter - INVALID_DATA_PACKET_NUM;
-							}
-							//
-							m_MCBDataHeadTmp[nMCB].head_use.scounter = pDBDataPackage.nSocketCounter;//nSocketCounter;	// socket packet serial number, self-add//????????????,1????
-							m_MCBDataHeadTmp[nMCB].head_use.pcounter.l = nPulseCounter;//nPulseCounter;	// pulse trigger number//??????????????????????
-							//m_MCBDataHeadTmp[nMCB].head_use.accEnergy = ((nError_DI&0x0200) ==0) ? 1 : 0;// acc energy sign
-							//2024.11.04¸ù¾İµ÷ÊÔ·´À¡£¬¸ßÄÜÊ±¸øÈí¼şÄÜÁ¿Ö¸Ê¾ĞÅºÅÎª0£¬Õı³£Ó¦¸ÃÎª1£¬¹Ê¸ÄÎªÏÂÃæÂß¼­
-							m_MCBDataHeadTmp[nMCB].head_use.accEnergy = ((nError_DI&0x0200) ==0) ? 0 : 1;// acc energy sign
-							///////////////////////////////////////////////////////////////////
-							UINT nDI3 = ((nError_DI&0x0800) == 0) ? 0 : 1;// acc energy sign
-							UINT nDI1 = ((nError_DI&0x0200) == 0) ? 0 : 1;// acc energy sign
-							//ÊÊÅäÈıÄÜ¼ÓËÙÆ÷£¨DI(3)Îª¸ß£¬ÔòÎª0.7MeV£¬·ñÔòÎª¸ßµÍÄÜ£©
-							if(m_bThreeEnergyAcc_En)
-							{
-								if((0 == nDI3) && (0 == nDI1)) //00³¬µÍ
-								{
-									m_MCBDataHeadTmp[nMCB].head_use.accEnergy = 2;
-								}
-								else if((0 == nDI3) && (1 == nDI1)) //01³¬µÍ
-								{
-									m_MCBDataHeadTmp[nMCB].head_use.accEnergy = 2;
-								}
-								else if((1 == nDI3) && (0 == nDI1))//10µÍÄÜ
-								{
-									m_MCBDataHeadTmp[nMCB].head_use.accEnergy = 0;
-								}
-								else//11¸ßÄÜ
-								{
-									m_MCBDataHeadTmp[nMCB].head_use.accEnergy = 1;
-								}
-							}
-							////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-							//CB??????????????12????????????,12????????
-							//Data 0??DB line??????????4??????SDCLK????????????????4??????SDCLK??????????
-							//Data 1??DB line??????????????????????
-							//Data 2????4????????????DDI????4????????????0????????????
-							//Data 3????????????????
-							//Data 4??11: ??????????????
-							//m_MCBDataHeadTmp[nMCB].d_head.head_use.ain0.ul =		(pDBDataPackage.CB_data[4]<<24)+(pDBDataPackage.CB_data[5]<<16)+(pDBDataPackage.CB_data[6]<<8)+(pDBDataPackage.CB_data[7]);// 24bit ADC??(????24bit + 8Bit (0x07))
-							m_MCBDataHeadTmp[nMCB].head_use.ain0.ul =		(pDBDataPackage.CB_data[4]<<16)+(pDBDataPackage.CB_data[5]<<8)+(pDBDataPackage.CB_data[6]);//24bit ADC??(????24bit + 8Bit (0x07))
-							m_MCBDataHeadTmp[nMCB].head_use.ptsmdata_h =	(pDBDataPackage.CB_data[0]<<24)+(pDBDataPackage.CB_data[1]<<16)+(pDBDataPackage.CB_data[2]<<8)+(pDBDataPackage.CB_data[3]);// ????0??3??????????
-							//m_MCBDataHeadTmp[nMCB].d_head.head_use.ptsmdata_l =	(pDBDataPackage.CB_data[8]<<24)+(pDBDataPackage.CB_data[9]<<16)+(pDBDataPackage.CB_data[10]<<8)+(pDBDataPackage.CB_data[11]);// CountPos(32bit)
-							m_MCBDataHeadTmp[nMCB].head_use.ptsmdata_l = nPulseCounter + INVALID_DATA_PACKET_NUM;
-							//
-							m_MCBDataHeadTmp[nMCB].head_use.ain1.ul = 0;				// ain1 data(UINT)
-							m_MCBDataHeadTmp[nMCB].head_use.sscnt = Update_pkg_n[nMCB];	//nPulseCounter + INVALID_DATA_PACKET_NUM;		// socket packet serial number, from packet
-							m_MCBDataHeadTmp[nMCB].head_use.regError_DI = nError_DI;
-						}
-					}
-
-				}
-				//std::this_thread::sleep_for(std::chrono::nanoseconds(300));
-			}
-			//ReleaseMutex(hMutex);
-			//lock.unlock();
-		}
-	//////////////////////////////////////////////////////////////////
-#if defined(_MSC_VER) || defined(WIN64) || defined(_WIN64) || defined(__WIN64__) || defined(WIN32) || defined(_WIN32) || defined(__WIN32__) || defined(__NT__)
-        ReleaseMutex(hMutex);
-#else
-    //lock.unlock();
-    //std::this_thread::sleep_for(std::chrono::milliseconds(1));
-#endif
+    ////////////////////////////////////////////////////////////
+    // æ¯ MCB ä¸€æ¬¡é‡‡é›†çš„æœ€å°æ‰¹å¤„ç†å­—èŠ‚æ•°ï¼ˆHMCB4 è·¯å¾„æŒ‰ DBLine åŒ…é•¿å–æœ€å¤§ï¼Œ
+    // å¤š DBLine æ—¶é˜²æ­¢åŠåŒ…è¿‡æ—©è¿›å…¥è§£æï¼›å¼‚å¸¸å…œåº• 4096ï¼‰
+    size_t minBatchBytes = 0;
+    for (INT8U d = 0; d < m_DMInfo[nMCB].nDBLineEnNum; ++d)
+    {
+        if (gbl_DBLine_Size[nMCB][d] > minBatchBytes)
+            minBatchBytes = gbl_DBLine_Size[nMCB][d];
     }
-#if defined(_MSC_VER) || defined(WIN64) || defined(_WIN64) || defined(__WIN64__) || defined(WIN32) || defined(_WIN32) || defined(__WIN32__) || defined(__NT__)
-    //////////////////////////////////////////////////////////////////
-    LeaveCriticalSection(&ics);
-    ////////////////////////////////////////////////////////////////////////////////////////////////////
-#else
-#endif
-	////////////////////////////////////////////////////////////////////////////////////////////////////
-	//memset(tmp,0,512);
-	//sprintf(tmp,"Exit HMCB(4)%d ETH_read_and_parse_dataEx_Thread. \n", nMCB);
-	//sz_szInfo = tmp;
-	//WriteLogFile(sz_szInfo);
+    if (minBatchBytes == 0)
+        minBatchBytes = 4096;
+    ////////////////////////////////////////////////////////////
+    while (0 == AtomicLoadL(&ctx.bStop))
+    {
+        // ---- ç­‰å¾…æ•°æ®ï¼ˆ100ms è¶…æ—¶ä»¥ä¾¿æ£€æŸ¥é€€å‡ºï¼‰----
+        bool bSignaled = ctx.dataEvent.wait(100);
 
-	return 0;
+        if (0 != AtomicLoadL(&ctx.bStop))
+            break;
+
+        // äº‹ä»¶æœªä¿¡å·ä¸”æ•°æ®ä¸è¶³ä¸€æ‰¹ï¼šç»§ç»­ç­‰ï¼ˆè¶…æ—¶æœŸé—´æ£€æŸ¥æ˜¯å¦åº”é€€å‡ºï¼‰
+        if ((!bSignaled) && (ctx.local.Size() < minBatchBytes))
+        {
+            if ((AtomicLoadL(&m_bStart) == 0) && (ctx.local.Size() == 0))
+                break;
+            continue;
+        }
+        // ---- è¯Šæ–­ï¼ˆHMCB_LIB_DEBUG=1ï¼‰ï¼šè§£æä¾§æ¯ç§’çŠ¶æ€ ----
+        static DWORD s_dbgParseT0 = 0; static unsigned long long s_dbgParsed0 = 0;
+        if (getenv("HMCB_LIB_DEBUG")) {
+            DWORD now = NucTool::GetTickCount();
+            if (s_dbgParseT0 == 0) { s_dbgParseT0 = now; s_dbgParsed0 = ctx.totalParsedBytes; }
+            if (now - s_dbgParseT0 >= 1000) {
+                fprintf(stderr, "[libdbg][parse] rate=%lluB/s shared=%zu local=%zu start=%ld stop=%ld bStop=%ld\n",
+                        ctx.totalParsedBytes - s_dbgParsed0, ctx.shared.Size(), ctx.local.Size(),
+                        (long)AtomicLoadL(&m_bStart), (long)AtomicLoadL(&m_bPreStop), (long)AtomicLoadL(&ctx.bStop));
+                s_dbgParseT0 = now; s_dbgParsed0 = ctx.totalParsedBytes;
+            }
+        }
+        // ---- æŠŠå…±äº«ç¼“å†²æ•°æ®æ¬åˆ°çº¿ç¨‹ç§æœ‰ local ----
+        {
+            std::lock_guard<std::mutex> lk(ctx.csBuf);
+            if (ctx.shared.Size() > 0)
+            {
+                const unsigned char* pMain = ctx.shared.Data();
+                size_t nMainLen = ctx.shared.Size();
+                if (pMain && nMainLen > 0)
+                    ctx.local.Append(pMain, nMainLen);
+                ctx.shared.Clear();
+            }
+            //æ‰‹åŠ¨é‡ç½®äº‹ä»¶ç”±æ¶ˆè´¹æ–¹è‡ªå·±å¤ä½ï¼ˆä¸´ç•ŒåŒºå†…ï¼Œé˜²ä¸¢å¤±å”¤é†’ï¼‰
+            ctx.dataEvent.clear();
+        }
+
+        // ---- è§£æ local ä¸­çš„æ•°æ®ï¼ˆå¾ªç¯ç›´åˆ°ä¸è¶³ä¸€åŒ…/è¦æ±‚é€€å‡ºï¼‰----
+        while ((0 == AtomicLoadL(&ctx.bStop)) && (AtomicLoadL(&m_bStart) != 0))
+        {
+            size_t consumed = 0;
+            bool bContinue = ParseBuffer_HMCB4(nMCB, ctx.local, m_lcounter, consumed);
+
+            ctx.totalParsedBytes += consumed;
+
+            if (!bContinue)
+            {
+                AtomicStoreL(&ctx.bStop, 1);
+                break;      // åœæ­¢ / ç›®æ ‡åˆ°è¾¾ / ä¸¥é‡é”™è¯¯ï¼šé€€å‡ºå†…å±‚
+            }
+
+            if (consumed == 0)
+                break;      // ç¼“å†²æ²¡æœ‰å¯è§£ææ•°æ®ï¼Œé€€å‡ºå†…å±‚ç­‰ä¸‹ä¸€æ¬¡äº‹ä»¶
+        }
+
+        //é‡‡é›†æœŸé—´é˜²æ­¢ç§æœ‰ç¼“å†²æ— é™è†¨èƒ€ï¼ˆConsume å†…éƒ¨å·²æ‘Šé”€å‹ç¼©ï¼Œæ­¤å¤„å…œåº•æ¸…ç©ºï¼‰
+        if (ctx.local.Size() == 0)
+            ctx.local.Clear();
+    }
+
+    //çº¿ç¨‹é€€å‡ºï¼šç½®å®Œæˆæ ‡å¿—å¹¶å”¤é†’ç­‰å¾…æ–¹ï¼ˆStopParseThreads çš„é™æ—¶ç­‰å¾…ï¼‰
+    {
+        std::lock_guard<std::mutex> lk(ctx.doneMu);
+        ctx.bThreadDone = true;
+    }
+    ctx.doneCv.notify_all();
+    //
+    memset(tmp,0,512);
+    sprintf(tmp,"HMCB(4)%d parse thread exit. recv=%llu, parsed=%llu\n", nMCB, ctx.totalRecvBytes, ctx.totalParsedBytes);
+    sz_szInfo = tmp;
+    WriteLogFile(sz_szInfo);
+}
+
+// ============================================================
+// å¯åŠ¨æ‰€æœ‰ MCB çš„è§£æçº¿ç¨‹ï¼ˆStart_HMCB4 åœ¨ m_bStart=1 åè°ƒç”¨ï¼‰
+// ============================================================
+bool CMCBCtrlC::StartParseThreads()
+{
+static std::mutex s_parseLcMu;   // Start/Stop å¹¶å‘é˜²æŠ¤ï¼ˆstd::thread::join ä¸å¯é‡å…¥ï¼‰
+std::lock_guard<std::mutex> lcLock(s_parseLcMu);
+    bool bStartOK = true;
+    std::string sz_szInfo = ("");
+    char tmp[512] = {0};
+
+    for (int i = 0; i < (int)m_nMCBNum; i++)
+    {
+        MCBParseContext& ctx = g_parseCtx[i];
+
+        //æ£€æŸ¥æ—§è§£æçº¿ç¨‹æ˜¯å¦å·²é€€å‡ºï¼›æœªé€€å‡ºå…ˆé€šçŸ¥é€€å‡ºå¹¶é™æ—¶ç­‰å¾…
+        if (ctx.parseThread.joinable())
+        {
+            if (!ctx.bThreadDone)
+            {
+                AtomicStoreL(&ctx.bStop, 1);
+                ctx.dataEvent.signal();
+                //
+                bool bDone = false;
+                {
+                    std::unique_lock<std::mutex> lk(ctx.doneMu);
+                    bDone = ctx.doneCv.wait_for(lk, std::chrono::milliseconds(500),
+                                                [&ctx] { return ctx.bThreadDone; });
+                }
+                if (!bDone)
+                {
+                    //å†ç­‰ 5sï¼ˆå¯¹ç…§ Windows 500ms+5s ä¸¤æ®µå¼ç­‰å¾…ï¼‰
+                    std::unique_lock<std::mutex> lk(ctx.doneMu);
+                    bDone = ctx.doneCv.wait_for(lk, std::chrono::milliseconds(5000),
+                                                [&ctx] { return ctx.bThreadDone; });
+                }
+                if (!bDone)
+                {
+                    memset(tmp,0,512);
+                    sprintf(tmp,"HMCB(4)%d old parse thread still running, cannot start new one.\n", i);
+                    sz_szInfo = tmp;
+                    WriteLogFile(sz_szInfo);
+                    bStartOK = false;
+                    break;
+                }
+            }
+            ctx.parseThread.join();
+        }
+        ////////////////////////////////////////////////////////////
+        if (!bStartOK)
+        {
+            return bStartOK;
+        }
+        ////////////////////////////////////////////////////////////
+        //å¤ä½çŠ¶æ€
+        AtomicStoreL(&ctx.bStop, 0);
+        ctx.totalRecvBytes   = 0;
+        ctx.totalParsedBytes = 0;
+        ctx.local.Clear();
+        ctx.bThreadDone = false;
+
+        //æ¸…ç©ºå…±äº«ç¼“å†²
+        {
+            std::lock_guard<std::mutex> lk(ctx.csBuf);
+            ctx.shared.Clear();
+            ctx.dataEvent.clear();
+        }
+
+        //å¯åŠ¨è§£æçº¿ç¨‹
+        ctx.parseThread = std::thread(MCBParseThreadProc, i);
+
+        memset(tmp,0,512);
+        sprintf(tmp,"HMCB(4)%d parse thread created.\n", i);
+        sz_szInfo = tmp;
+        WriteLogFile(sz_szInfo);
+    }
+    return bStartOK;
+}
+
+// ============================================================
+// åœæ­¢æ‰€æœ‰è§£æçº¿ç¨‹ï¼ˆCheckDataEnd / NormalEndDAQ / CloseMCB è°ƒç”¨ï¼‰
+// å…ˆç½®åœæ­¢æ ‡å¿—å¹¶å”¤é†’ï¼Œå†é™æ—¶ç­‰å¾…è‡ªç„¶é€€å‡ºï¼›ç»ä¸å¼ºæ€çº¿ç¨‹
+// ============================================================
+void CMCBCtrlC::StopParseThreads()
+{
+static std::mutex s_parseLcMu;   // Start/Stop å¹¶å‘é˜²æŠ¤ï¼ˆstd::thread::join ä¸å¯é‡å…¥ï¼‰
+std::lock_guard<std::mutex> lcLock(s_parseLcMu);
+    std::string sz_szInfo = ("");
+    char tmp[512] = {0};
+    //ç¬¬ä¸€æ­¥ï¼šç½®åœæ­¢æ ‡å¿—å¹¶å”¤é†’æ‰€æœ‰çº¿ç¨‹
+    for (int i = 0; i < MAX_MCBNUM; i++)
+    {
+        if (g_parseCtx[i].parseThread.joinable())
+        {
+            AtomicStoreL(&g_parseCtx[i].bStop, 1);
+            g_parseCtx[i].dataEvent.signal();   //å”¤é†’ç­‰å¾…
+        }
+    }
+    //ç¬¬äºŒæ­¥ï¼šç­‰å¾…çº¿ç¨‹è‡ªç„¶é€€å‡º
+    for (int i = 0; i < MAX_MCBNUM; i++)
+    {
+        if (g_parseCtx[i].parseThread.joinable())
+        {
+            MCBParseContext& ctx = g_parseCtx[i];
+            bool bDone = ctx.bThreadDone;
+            if (!bDone)
+            {
+                std::unique_lock<std::mutex> lk(ctx.doneMu);
+                bDone = ctx.doneCv.wait_for(lk, std::chrono::milliseconds(5000),
+                                            [&ctx] { return ctx.bThreadDone; });
+                lk.unlock();
+                if (!bDone)
+                {
+                    //ç¬¬ä¸€æ¬¡è¶…æ—¶å†ç­‰ 10sï¼ˆå¯¹ç…§ Windows 5s+10s ä¸¤æ®µå¼ï¼‰
+                    memset(tmp,0,512);
+                    sprintf(tmp,"HMCB(4)%d parse thread exit timeout(5s), wait another 10s...\n", i);
+                    sz_szInfo = tmp;
+                    WriteLogFile(sz_szInfo);
+                    lk.lock();
+                    bDone = ctx.doneCv.wait_for(lk, std::chrono::milliseconds(10000),
+                                                [&ctx] { return ctx.bThreadDone; });
+                    lk.unlock();
+                }
+            }
+            if (bDone)
+            {
+                memset(tmp,0,512);
+                sprintf(tmp,"HMCB(4)%d parse thread exit.\n", i);
+                sz_szInfo = tmp;
+                WriteLogFile(sz_szInfo);
+                ctx.parseThread.join();
+            }
+            else
+            {
+                //ä»è¶…æ—¶ï¼šåˆ†ç¦»çº¿ç¨‹è®©å…¶ç¨åè‡ªè¡Œé€€å‡ºï¼ˆbStop å·²ç½®ä½ï¼›ä¸Šä¸‹æ–‡ä¸ºé™æ€å­˜å‚¨ï¼Œ
+                //çº¿ç¨‹å°¾éƒ¨ä»…è®¿é—® ctx ä¸æ—¥å¿—ï¼›CLOSE è·¯å¾„ä¼šå†æ¬¡ç­‰å¾…å›æ”¶ï¼‰
+                memset(tmp,0,512);
+                sprintf(tmp,"HMCB(4)%d parse thread still running after 15s, detach it.\n", i);
+                sz_szInfo = tmp;
+                WriteLogFile(sz_szInfo);
+                ctx.parseThread.detach();
+            }
+        }
+    }
+}
+
+// è¿”å›å€¼ï¼štrue  - å¯ç»§ç»­è§£æï¼ˆç¼“å†²ä¸è¶³ä¸€åŒ…/æœ¬æ¿å·²è¾¾ç›®æ ‡åŒ…æ•°ï¼‰
+//         false - è§£æçº¿ç¨‹åº”é€€å‡ºï¼ˆåœæ­¢ã€ç›®æ ‡åˆ°ã€ä¸¥é‡é”™è¯¯ï¼‰
+// å‡ºå‚ï¼š  consumed - æœ¬æ¬¡ä» local å·²æ¶ˆè´¹çš„å­—èŠ‚æ•°ï¼ˆç›¸å¯¹è¯»æŒ‡é’ˆï¼‰
+// æ³¨æ„ï¼š  pBuf æŒ‡å‘ local å†…éƒ¨å­˜å‚¨ï¼ŒPushFront/EraseAt/Consume åå¤±æ•ˆï¼Œ
+//         å¾ªç¯å›åˆ°å¤´éƒ¨å¿…é¡»é‡æ–°å– pBuf = local.Data()
+// ============================================================
+bool CMCBCtrlC::ParseBuffer_HMCB4(int nMCB, CMCBDataBuffer& local, ULONG nTarget_pkg_num, size_t& consumed)
+{
+    consumed = 0;
+    //
+    std::string sz_szInfo = ("");
+    char tmp[512] = {0};
+    //æœªåŒ¹é…åˆ° SC å¤´çš„éæ•°æ®åŒ…å­—èŠ‚è®¡æ•°ï¼ˆä»…æ—¥å¿—ç”¨ï¼Œçº¿ç¨‹ç§æœ‰ï¼‰
+    static INT32U s_nNotDataPktCnt[MAX_MCBNUM] = {0};
+    //
+    if (nMCB < 0 || nMCB >= MAX_MCBNUM)
+        return false;
+    //è‹¥æ‰€æœ‰DBLineæœªä½¿èƒ½ï¼Œç›´æ¥è¿”å›ï¼ˆé˜² 1 å­—èŠ‚/æ¬¡ç©ºè½¬æ¶ˆè€—ç¼“å†²ï¼‰
+    if (0 == m_DMInfo[nMCB].nDBLineEnNum)
+    {
+        sz_szInfo = "HMCB(4)nDBLineEnNum == 0, cannot parse.\n";
+        WriteLogFile(sz_szInfo);
+        return false;
+    }
+    /////////////////////////////////////////////////////////////////////////////////
+    // ä»ç¼“å†²æ‹¿åˆ°çš„ä¸´æ—¶çŠ¶æ€
+    OneDBLineOnePackage pDBDataPackage;
+
+    // æ¯æ¬¡è¿›å…¥è§£æéœ€è‡³å°‘å¯è§£ä¸€ä¸ªå®Œæ•´ SC åŒ…ï¼ˆHMCB4 ä¸€ä¸ª MCB æœ‰å¤šä¸ª DBLineï¼›
+    // å–å„ DBLine åŒ…é•¿æœ€å¤§å€¼ï¼Œå¼‚å¸¸å…œåº• 4096ï¼‰
+    const size_t SC_HEADER_SIZE = 10;
+    size_t maxDBLineSize = 0;
+    for (INT8U d = 0; d < m_DMInfo[nMCB].nDBLineEnNum; ++d)
+    {
+        if (gbl_DBLine_Size[nMCB][d] > maxDBLineSize)
+            maxDBLineSize = gbl_DBLine_Size[nMCB][d];
+    }
+    if (maxDBLineSize == 0)
+        maxDBLineSize = 4096;   //å‡ ä½•å¼‚å¸¸å…œåº•
+    //
+    const size_t minSize = maxDBLineSize;
+    const INT32U MAX_SC_PKG_LEN = 16 * 1024 * 1024;  //é•¿åº¦ä¸Šé™ï¼ˆé˜²å¼‚å¸¸é•¿åº¦å­—æ®µï¼‰
+    //
+    INT32S idx = 0;
+    // ------------------------------------------------------------------
+    // ä¸»å¾ªç¯ï¼šæ¯æ¬¡è¿­ä»£è§£æè¶Šè¿‡ 1 ä¸ªå®Œæ•´ SC åŒ…ï¼Œæˆ– 1 å­—èŠ‚é‡åŒæ­¥
+    // ------------------------------------------------------------------
+    while (true)
+    {
+        // ---------- 0) é€€å‡ºæ¡ä»¶ ----------
+        if (AtomicLoadL(&m_bStart) == 0)
+            return false;
+
+        if (nTarget_pkg_num > 0)
+        {
+            //æ‰€æœ‰ MCB æ˜¯å¦å·²é‡‡å¤Ÿç›®æ ‡åŒ…æ•°
+            BOOL bAllReached = TRUE;
+            for (idx = 0; idx < (INT32S)m_nMCBNum; ++idx)
+            {
+                if (parsed_pkg_n[idx] < nTarget_pkg_num)
+                {
+                    bAllReached = FALSE;
+                    break;
+                }
+            }
+            if (bAllReached && (AtomicLoadL(&m_bPreStop) == 0))
+            {
+                //è§£æçº¿ç¨‹ä¸åšStopï¼ˆå›è°ƒ/æ—¥å¿—ä¼šé‡å…¥ï¼‰ï¼Œç½®æ ‡å¿—äº¤ç”±
+                //OnTimer->CheckStopSts / CheckDataEnd å»æ‰§è¡Œ
+                m_timeprestop = NucTool::GetTickCount();
+                AtomicStoreL(&m_bPreStop, 1);
+                //
+                return false;
+            }
+            if (parsed_pkg_n[nMCB] >= nTarget_pkg_num)
+                return true;
+        }
+
+        // ---------- 1) å–ç¼“å†²æ•°æ®æŒ‡é’ˆ ----------
+        size_t avail = local.Size();
+        if (avail < minSize)
+        {
+            //æ•°æ®ä¸è¶³ä¸€åŒ…ï¼Œç­‰ä¸‹æ¬¡äº‹ä»¶
+            return true;
+        }
+        //æ³¨æ„ï¼špBuf æŒ‡å‘ local å†…éƒ¨å­˜å‚¨ï¼ŒPushFront/EraseAt/Consume åå¤±æ•ˆ
+        const unsigned char* pBuf = local.Data();
+        if (pBuf == NULL)
+        {
+            //æ•°æ®å­˜å‚¨ä¸ºç©ºï¼Œç­‰ä¸‹æ¬¡äº‹ä»¶
+            return true;
+        }
+        ///////////////////////////////////////////////////////////
+        memset(&pDBDataPackage, 0, sizeof(pDBDataPackage));
+        // ---------- 2) è§£æ SC å¤´ï¼ˆåç§» 0..9ï¼‰ ----------
+        INT16U SC_pkg_lead_code = ((INT16U)pBuf[0] << 8) | pBuf[1];
+        INT32U SC_pkg_len       = ((INT32U)pBuf[3] << 16) | ((INT32U)pBuf[4] << 8) | pBuf[5];
+        INT8U  SC_pkg_db_line   = pBuf[6];
+        INT8U  SC_pkg_type      = pBuf[7];
+        INT16U SC_pkg_index     = ((INT16U)pBuf[8] << 8) | pBuf[9];
+        //æŒ‰å®é™…å¯ç”¨çš„ DBLine æ•°æ ¡éªŒæ”¶åˆ°çš„ DBLine å·ï¼ˆè¶Šç•ŒæŒ‰ 1 å­—èŠ‚/æ¬¡é‡åŒæ­¥æ¶ˆè€—ï¼‰
+        if (SC_pkg_db_line >= m_DMInfo[nMCB].nDBLineEnNum)
+        {
+            local.Consume(1);
+            consumed += 1;
+            continue;
+        }
+        /////////////////////////////////////////////////////////
+        //åŒ…å¤´å¼•å¯¼ç ä¹‹åã€é•¿åº¦æ¯”è¾ƒä¹‹å‰ï¼Œå…ˆæ£€æŸ¥ SC_pkg_len æ˜¯å¦è¶…å‡ºå½“å‰å¯è¯»é•¿åº¦
+        if (SC_pkg_len < SC_HEADER_SIZE || SC_pkg_len > MAX_SC_PKG_LEN)
+        {
+            //é•¿åº¦å­—æ®µæ— æ•ˆï¼ŒæŒ‰ 1 å­—èŠ‚/æ¬¡é‡åŒæ­¥
+            local.Consume(1);
+            consumed += 1;
+            continue;
+        }
+        // ---------- 3) å¤´éƒ¨æ ¡éªŒä¸å®¹é”™ ----------
+        if (SC_pkg_lead_code != 0xAA55)
+        {
+            // 3a) ç¼º 0xAA å®¹é”™ï¼šæ•°æ®ä¸º [55,00,L2,L1,L0,...]ï¼ŒæŠŠ 0xAA è¡¥åœ¨å‰é¢
+            INT32U altLen = ((INT32U)pBuf[2] << 16) | ((INT32U)pBuf[3] << 8) | pBuf[4];
+            //
+            INT8U tmpDbLine = pBuf[5];
+            if (tmpDbLine >= m_DMInfo[nMCB].nDBLineEnNum)
+            {
+                tmpDbLine = (m_DMInfo[nMCB].nDBLineEnNum > 0) ? (m_DMInfo[nMCB].nDBLineEnNum - 1) : 0;
+            }
+            //
+            BOOL bFixMissingAA = (pBuf[0] == 0x55) && (pBuf[1] == 0x00) &&
+                                 ((altLen + 1) == (INT32U)gbl_DBLine_Size[nMCB][tmpDbLine]);
+            //
+            //é”™è¯¯è®¡æ•°
+            if (m_nMissAA55Cnt[nMCB] < 0xFFFFFFF0)
+            {
+                m_nMissAA55Cnt[nMCB]++;
+            }
+            //
+            if (bFixMissingAA)
+            {
+                if (1 == (m_nMissAA55Cnt[nMCB] % 10000))
+                {
+                    sz_szInfo = "HMCB(4) missing 0xAA lead, insert and fix length.\n";
+                    WriteLogFile(sz_szInfo);
+                }
+                //ä¿®å¤ç¼“å†²å¤´éƒ¨ï¼ˆO(1) å–å†³äºè¯»æŒ‡é’ˆ m_nReadPosï¼‰
+                local.PushFront(0xAA);
+                //è¡¥ 0xAA ååŒ…é•¿åº¦+1
+                const INT32U newLen = gbl_DBLine_Size[nMCB][tmpDbLine];
+                local.At(3) = (unsigned char)((newLen >> 16) & 0xFF);
+                local.At(4) = (unsigned char)((newLen >>  8) & 0xFF);
+                local.At(5) = (unsigned char)( newLen        & 0xFF);
+                continue;   //é‡æ–°è¿›ä¸»å¾ªç¯æ ¡éªŒåŒ…å¤´
+            }
+            // 3b) æœªè¯†åˆ«çš„å¤´éƒ¨ï¼Œè·³ 1 å­—èŠ‚ç»§ç»­æ‰¾åŒ…å¤´
+            if (1 == (m_nMissAA55Cnt[nMCB] % 10000))
+            {
+                sprintf(tmp,"HMCB(4)%d no SC_PKG_LEAD_CODE 0xAA55, skip 1 byte.\n", nMCB);
+                sz_szInfo = tmp;
+                WriteLogFile(sz_szInfo);
+            }
+            if (m_nMissAA55Cnt[nMCB] > 65535 * 2)
+            {
+                sprintf(tmp,"HMCB(4)%d miss 0xAA55 more than %d times, exit parse.\n", nMCB, 65535 * 2);
+                sz_szInfo = tmp;
+                WriteLogFile(sz_szInfo);
+                AtomicStoreL(&m_bPreDAQSucessFlag[nMCB], 0);
+                SendMCBMsg(MCB_MSG_STATUS, MCB_DVSTS, ((long(nMCB)) << 16) + MCB_STSCD_MISSAA55_ERROR);
+                //
+                //ç”±è§£æçº¿ç¨‹è§¦å‘åœæ­¢
+                if (AtomicLoadL(&m_bPreStop) == 0)
+                {
+                    //çœŸæ­£åœæ­¢ç”±å®šæ—¶çº¿ç¨‹å»åšï¼ˆè§£æçº¿ç¨‹ä¸é‡å…¥ Stopï¼‰
+                    m_timeprestop = NucTool::GetTickCount();
+                    AtomicStoreL(&m_bPreStop, 1);
+                }
+                return false;
+            }
+
+            local.Consume(1);
+            consumed += 1;
+            continue;
+        }
+
+        // 3c) ç±»å‹ / é•¿åº¦ä¸åŒ¹é…
+        if (SC_pkg_type != DB_DAQ_PKG || SC_pkg_len != gbl_DBLine_Size[nMCB][SC_pkg_db_line])
+        {
+            s_nNotDataPktCnt[nMCB]++;
+
+            if (SC_pkg_len != gbl_DBLine_Size[nMCB][SC_pkg_db_line])
+            {
+                //æ•°æ®é”™è¯¯åœºæ™¯ï¼Œæ¯ 1000 åŒ…å†™ä¸€æ¬¡æ—¥å¿—ï¼ˆé˜²æ­¢åˆ·çˆ†æ—¥å¿—å½±å“ä¼ è¾“ï¼‰
+                static INT32U s_nLenErrCnt[MAX_MCBNUM] = {0};
+                s_nLenErrCnt[nMCB]++;
+                if (1 == (s_nLenErrCnt[nMCB] % 1000))
+                {
+                    sprintf(tmp,"HMCB(4)%d DB%d SC_pkg_len=%u, expected=%u (count=%u).\n",
+                            nMCB, SC_pkg_db_line, SC_pkg_len,
+                            (unsigned int)gbl_DBLine_Size[nMCB][SC_pkg_db_line], s_nLenErrCnt[nMCB]);
+                    sz_szInfo = tmp;
+                    WriteLogFile(sz_szInfo);
+                }
+            }
+
+            INT32S extra = (INT32S)SC_pkg_len - (INT32S)gbl_DBLine_Size[nMCB][SC_pkg_db_line];
+
+            // 3d) å¤š 1 å­—èŠ‚æ•°æ®å®¹é”™ï¼ˆDB å‰æˆ– CB å‰æ··å…¥ 1 å­—èŠ‚ï¼‰
+            if (extra == 1)
+            {
+                BOOL bFixed = FALSE;
+                const INT16U oneDBSz = (INT16U)(m_DMInfo[nMCB].nRowNum * m_DMInfo[nMCB].nColNum * m_nADBit / 8);
+                // æƒ…å½¢ Aï¼šDB å­åŒ…å‰å¤š 1 å­—èŠ‚ï¼ˆä½ç½® 10ï¼‰
+                if (avail >= 15) //è‡³å°‘èƒ½è®¿é—® pBuf[14]
+                {
+                    INT8U  DB_t2    = pBuf[11];
+                    INT16U subSize  = pBuf[12] | ((INT16U)(pBuf[13] & 0x0F) << 8);
+                    INT8U  boardIdx = pBuf[14];
+                    if (boardIdx >= MAX_MCBADNUM)
+                        boardIdx = MAX_MCBADNUM - 1;
+                    if ((DB_t2 == DB_DAQ_PKG) && (subSize == oneDBSz) &&
+                        (boardIdx < m_DMInfo[nMCB].nDBDMNUM[SC_pkg_db_line]))
+                    {
+                        sprintf(tmp,"HMCB(4)%d DB%d extra 1 byte before DB sub-packet, erase it.\n", nMCB, SC_pkg_db_line);
+                        sz_szInfo = tmp;
+                        WriteLogFile(sz_szInfo);
+                        //
+                        local.EraseAt(10);
+                        local.At(3) = (unsigned char)((gbl_DBLine_Size[nMCB][SC_pkg_db_line] >> 16) & 0xFF);
+                        local.At(4) = (unsigned char)((gbl_DBLine_Size[nMCB][SC_pkg_db_line] >>  8) & 0xFF);
+                        local.At(5) = (unsigned char)( gbl_DBLine_Size[nMCB][SC_pkg_db_line]        & 0xFF);
+                        bFixed = TRUE;
+                    }
+                }
+                // æƒ…å½¢ Bï¼šCB å­åŒ…å‰å¤š 1 å­—èŠ‚ï¼ˆéœ€ä¿è¯ SC_pkg_len <= avail æ‰å®‰å…¨ï¼‰
+                if (!bFixed && SC_pkg_len >= 20 && SC_pkg_len <= avail)
+                {
+                    INT8U  cb_t1   = pBuf[SC_pkg_len - 20];
+                    INT8U  cb_t2   = pBuf[SC_pkg_len - 19];
+                    INT16U cbSize  = pBuf[SC_pkg_len - 18] | ((INT16U)(pBuf[SC_pkg_len - 17] & 0x0F) << 8);
+                    if (cb_t1 != CB_PKG && cb_t2 == CB_PKG && cbSize == 0x0C)
+                    {
+                        sprintf(tmp,"HMCB(4)%d DB%d extra 1 byte before CB sub-packet, erase it.\n", nMCB, SC_pkg_db_line);
+                        sz_szInfo = tmp;
+                        WriteLogFile(sz_szInfo);
+                        //
+                        local.EraseAt(SC_pkg_len - 20);
+                        local.At(3) = (unsigned char)((gbl_DBLine_Size[nMCB][SC_pkg_db_line] >> 16) & 0xFF);
+                        local.At(4) = (unsigned char)((gbl_DBLine_Size[nMCB][SC_pkg_db_line] >>  8) & 0xFF);
+                        local.At(5) = (unsigned char)( gbl_DBLine_Size[nMCB][SC_pkg_db_line]        & 0xFF);
+                        bFixed = TRUE;
+                    }
+                }
+                if (bFixed)
+                    continue;
+            }
+            // æœªè¯†åˆ«çš„é•¿åº¦é”™è¯¯ï¼Œè·³ 1 å­—èŠ‚
+            local.Consume(1);
+            consumed += 1;
+            continue;
+        }
+        if (SC_pkg_len > avail)
+        {
+            //å½“å‰ SC åŒ…æœªæ”¶å…¨ï¼Œç­‰ä¸‹ä¸€æ¬¡äº‹ä»¶
+            return true;
+        }
+        // ---------- 4) å¤´éƒ¨æœ‰æ•ˆï¼Œè§£æå„å­åŒ… ----------
+        // åŒ…å¤´å…± 10 å­—èŠ‚ï¼Œå­åŒ…ä»åç§» 10 å¼€å§‹åˆ°åç§» SC_pkg_len ç»“æŸ
+        size_t subOff     = 10;
+        size_t subEndOff  = (size_t)SC_pkg_len;   //ä¸ SC åŒ…çš„ç»“æŸä½ç½®å¯¹é½
+        //
+        INT8U Max_DB_board_index = 0;
+        INT8U overall_err        = 0;
+        BOOL  bSubPackagesOK     = FALSE;
+
+        while (subOff + 6 <= subEndOff)
+        {
+            if (subEndOff > avail)
+            {
+                //å½“å‰ SC åŒ…ä½™ä¸‹æ•°æ®é•¿åº¦è¶…é™ï¼Œç­‰æ•°æ®
+                return true;
+            }
+            INT8U  xB_pkg_type    = pBuf[subOff];
+            INT16U xB_pkg_size    = pBuf[subOff + 1];
+            INT8U  high4          = pBuf[subOff + 2];
+            xB_pkg_size          |= (INT16U)(high4 & 0x0F) << 8;
+            INT8U  xB_pkg_index   = (high4 & 0xF0) >> 4;
+            INT8U  xB_pkg_board_i = pBuf[subOff + 3];
+            if (xB_pkg_board_i >= MAX_MCBADNUM) xB_pkg_board_i = MAX_MCBADNUM - 1;
+            INT8U  xB_pkg_logic_err1 = pBuf[subOff + 4];
+            INT8U  xB_pkg_logic_err2 = pBuf[subOff + 5];
+
+            // ---- DB å­åŒ… ----
+            if (xB_pkg_type == DB_ERR_PKG || xB_pkg_type == SC_pkg_type)
+            {
+                INT8U boardIdx = xB_pkg_board_i;
+                pDBDataPackage.DB_pkg_type[boardIdx]   = xB_pkg_type;
+                pDBDataPackage.DB_pkg_index[boardIdx]  = xB_pkg_index;
+                pDBDataPackage.DB_board_index[boardIdx]= boardIdx;
+                pDBDataPackage.DB_logic_err1[boardIdx] = xB_pkg_logic_err1;
+                pDBDataPackage.DB_logic_err2[boardIdx] = xB_pkg_logic_err2;
+                pDBDataPackage.DB_data_len[boardIdx]   = xB_pkg_size;
+                if (Max_DB_board_index < boardIdx) Max_DB_board_index = boardIdx;
+                pDBDataPackage.Max_DB_board = Max_DB_board_index + 1;
+                //
+                //é˜²è¶Šç•Œï¼šå®é™…å¯æ§é•¿åº¦ä½œä¸ºå†™å…¥ä¸Šé™ï¼Œç»ä¸æŒ‰ç†è®ºé•¿åº¦ç›´æ¥å†™
+                const size_t maxDBDataSize = sizeof(pDBDataPackage.DB_data[boardIdx]);
+                if ((size_t)xB_pkg_size > maxDBDataSize)
+                {
+                    sprintf(tmp,"HMCB(4)%d DB%d sub-packet size %u exceeds buffer %u, skip and resync.\n",
+                            nMCB, SC_pkg_db_line, (unsigned int)xB_pkg_size, (unsigned int)maxDBDataSize);
+                    sz_szInfo = tmp;
+                    WriteLogFile(sz_szInfo);
+                    //è·³å‡ºå­åŒ…å¾ªç¯ï¼ŒæŒ‰å­—èŠ‚é‡åŒæ­¥
+                    break;
+                }
+
+                size_t dataStart = subOff + 6;
+                size_t copyLen   = (size_t)xB_pkg_size;
+                //avail æ˜¯ local çš„å¯ç”¨é•¿åº¦ï¼ŒsubEndOff æ˜¯å½“å‰ SC åŒ…çš„ç»“æŸåç§»
+                if (dataStart + copyLen > subEndOff)
+                {
+                    //å­åŒ…è¶Šå‡ºå½“å‰ SC åŒ…è¾¹ç•Œï¼ŒåŒ…å¤´æŸå
+                    break;
+                }
+                if (dataStart + copyLen > avail)
+                {
+                    //è¶Šç•Œè¯´æ˜æ•°æ®ä¸è¶³ï¼Œç­‰æ•°æ®
+                    break;
+                }
+                //////////////////////////////////////////////////////////
+                //DB å­åŒ…è´Ÿè½½é•¿åº¦ä¸æœŸæœ›å€¼æ¯”å¯¹
+                const UINT nExpectDBLen = m_DMInfo[nMCB].nRowNum * m_DMInfo[nMCB].nColNum * m_nADBit / 8;
+                if (xB_pkg_size != nExpectDBLen)
+                {
+                    sprintf(tmp,"HMCB(4)%d DB%d sub-packet size %u != expected %u, resync.\n",
+                            nMCB, SC_pkg_db_line, (unsigned int)xB_pkg_size, nExpectDBLen);
+                    sz_szInfo = tmp;
+                    WriteLogFile(sz_szInfo);
+                    bSubPackagesOK = FALSE;
+                    break;
+                }
+                //////////////////////////////////////////////////////////
+                memcpy(pDBDataPackage.DB_data[boardIdx], pBuf + dataStart, copyLen);
+
+                size_t crcOff = dataStart + xB_pkg_size;
+                if (crcOff >= avail) break;
+                pDBDataPackage.DB_crc_code[boardIdx] = pBuf[crcOff];
+
+                //æŒ‰å®é™…å€¼å†™å…¥æ•°æ®é•¿åº¦
+                pDBDataPackage.DB_data_len[boardIdx] = (INT16U)xB_pkg_size;
+
+                subOff = crcOff + 1;
+                continue;
+            }
+
+            // ---- CB å­åŒ…ï¼ˆä¹‹å SC åŒ…ç»“æŸï¼‰ ----
+            if (xB_pkg_type == CB_PKG)
+            {
+                pDBDataPackage.CB_pkg_type      = xB_pkg_type;
+                pDBDataPackage.CB_pkg_index     = xB_pkg_index;
+                pDBDataPackage.CB_board_index   = xB_pkg_board_i;
+                pDBDataPackage.CB_data_len      = xB_pkg_size;
+                pDBDataPackage.CB_logic_err1    = xB_pkg_logic_err1;
+                pDBDataPackage.CB_logic_err2    = xB_pkg_logic_err2;
+                //
+                size_t dataStart = subOff + 6;
+                //CB å­åŒ…è´Ÿè½½æŒ‰ CB_data å®é™…å¤§å°
+                size_t copyLen = (size_t)xB_pkg_size;
+                if (copyLen > sizeof(pDBDataPackage.CB_data))
+                    copyLen = sizeof(pDBDataPackage.CB_data);
+                //
+                if (dataStart + copyLen > subEndOff)
+                {
+                    //å­åŒ…è¶Šå‡ºå½“å‰ SC åŒ…è¾¹ç•Œï¼ŒåŒ…å¤´æŸå
+                    break;
+                }
+                if (dataStart + copyLen > avail)
+                {
+                    break;
+                }
+                memcpy(pDBDataPackage.CB_data, pBuf + dataStart, copyLen);
+                //
+                size_t crcOff = dataStart + xB_pkg_size;
+                //
+                if (crcOff >= avail)
+                    break;
+                pDBDataPackage.CB_crc_code = pBuf[crcOff];
+
+                //å¡«å†™ä¸€ä¸ªå®Œæ•´ SC åŒ…çš„æè¿°
+                pDBDataPackage.nMCB          = nMCB;
+                pDBDataPackage.DB_line_i     = SC_pkg_db_line;
+                pDBDataPackage.rx_DB_line_i  = SC_pkg_db_line;
+                pDBDataPackage.SC_pkg_type   = SC_pkg_type;
+                pDBDataPackage.SC_pkg_index  = SC_pkg_index;
+                pDBDataPackage.overall_err   = overall_err;
+                bSubPackagesOK = TRUE;
+                break;
+            }
+
+            // ---- æœªçŸ¥å­åŒ…ç±»å‹ï¼šè·³å‡ºæŒ‰ 1 å­—èŠ‚é‡åŒæ­¥ ----
+            break;
+        }
+
+        if (!bSubPackagesOK)
+        {
+            local.Consume(1);
+            consumed += 1;
+            continue;
+        }
+
+        // ---- å…³é”®æ”¹åŠ¨ï¼šåªè¦è§£å‡ºä¸€ä¸ªå®Œæ•´æœ‰æ•ˆåŒ…ï¼Œå°±åˆ·æ–°æ´»è·ƒæ—¶é—´ ----
+        m_timehot[nMCB]     = NucTool::GetTickCount();
+        m_timenodata[nMCB]  = NucTool::GetTickCount();
+        //
+        // ---------- 5) åŒ…ç»´æŠ¤ï¼ˆä¸æ—§ ETH_read_and_parse_dataEx_Thread_HMCB4 ä¸€è‡´ï¼‰ ----------
+        // 5.1 åªæœ‰æœ€åä¸€ä¸ª dbLine çš„æ•°æ®å®Œæ•´ï¼Œæ‰ç»Ÿè®¡å·²è§£æçš„æ•°æ®åŒ…
+        const UINT nMaxDBLindIndex = m_DMInfo[nMCB].nDBLineEnNum > 0 ? m_DMInfo[nMCB].nDBLineEnNum - 1 : 0;
+        //
+        if (nMaxDBLindIndex == (UINT)pDBDataPackage.DB_line_i)
+        {
+            parsed_pkg_n[nMCB]++;
+            //
+            if (1 == parsed_pkg_n[nMCB])
+            {
+                SC_1st_pkg_index[nMCB] = pDBDataPackage.SC_pkg_index;
+                SC_1st_pkg_TriggCnt[nMCB] =
+                    ((INT32U)pDBDataPackage.CB_data[ 8] << 24) |
+                    ((INT32U)pDBDataPackage.CB_data[ 9] << 16) |
+                    ((INT32U)pDBDataPackage.CB_data[10] <<  8) |
+                    ((INT32U)pDBDataPackage.CB_data[11]);
+            }
+
+            // 16 ä½åŒ…å·æº¢å‡ºæ‹¼æ¥
+            INT32U delta = (pDBDataPackage.SC_pkg_index + 65536u -
+                            (SC_pre_pkg_index[nMCB] & 0xFFFFu)) % 65536u;
+            SC_current_pkg_index[nMCB] += delta;
+            //
+            SC_pre_pkg_index[nMCB] = pDBDataPackage.SC_pkg_index;
+            pDBDataPackage.SC_pkg_index = SC_current_pkg_index[nMCB] - SC_1st_pkg_index[nMCB] + 1;
+            // åˆ¤å®šè§£æåçš„å‰ 6 ä¸ªé€šé“æ•°æ®ï¼Œè‹¥ä¸º 0xA5 åˆ™åˆ¤å®šä¸ºæœ¬æ¬¡é‡‡é›†çš„é¦–ä¸ªæ•°æ®åŒ…
+            if (pDBDataPackage.DB_data_len[0] >= 6 &&
+                pDBDataPackage.DB_data[0][0] == 0xA5 &&
+                pDBDataPackage.DB_data[0][1] == 0xA5 &&
+                pDBDataPackage.DB_data[0][2] == 0xA5 &&
+                pDBDataPackage.DB_data[0][3] == 0xA5 &&
+                pDBDataPackage.DB_data[0][4] == 0xA5 &&
+                pDBDataPackage.DB_data[0][5] == 0xA5)
+            {
+                parsed_pkg_n[nMCB]    = 0;
+                Update_pkg_n[nMCB]    = 0;
+                SC_1st_pkg_index[nMCB]      = 0;
+                SC_1st_pkg_TriggCnt[nMCB]   = 0;
+                SC_pre_pkg_index[nMCB]      = 0;
+                SC_current_pkg_index[nMCB]  = 0;
+
+                // å…³é”®æ”¹åŠ¨ï¼šæ¸…é›¶è·¨æ¬¡é‡‡é›†çš„ 0xA5 ç¼ºå¤±è®¡æ•°
+                m_nMiss0XA5PacketCnt[nMCB] = 0;
+                //
+                m_bGet0xA5Packet[nMCB] = true;
+                //
+                sprintf(tmp,"HMCB(4)%d DB%d got 0xA5 start packet.\n", nMCB, SC_pkg_db_line);
+                sz_szInfo = tmp;
+                WriteLogFile(sz_szInfo);
+            }
+
+            if (!m_bGet0xA5Packet[nMCB])
+            {
+                m_nMiss0XA5PacketCnt[nMCB]++;
+                if (1 == (m_nMiss0XA5PacketCnt[nMCB] % 100))
+                {
+                    sprintf(tmp,"HMCB(4)%d DB0 got %d packets, no 0xA5 yet.\n",
+                            nMCB, m_nMiss0XA5PacketCnt[nMCB]);
+                    sz_szInfo = tmp;
+                    WriteLogFile(sz_szInfo);
+                }
+            }
+        }
+
+        //æ˜¯å¦è¦æ±‚è·å–èµ·å§‹çš„ 0xA5 æ•°æ®åŒ…
+        if (!m_bNeedGet0xA5)
+            m_bGet0xA5Packet[nMCB] = true;
+
+        // 5.2 è¶…è¿‡ INVALID_DATA_PACKET_NUM ä¸ªä¸¢å¼ƒåŒ…ä¹‹åæ‰å›è°ƒåº”ç”¨
+        const UINT nDiscardThreshold = (UINT)INVALID_DATA_PACKET_NUM;
+        BOOL bReadyToDispatch = m_bGet0xA5Packet[nMCB] &&
+                                ((parsed_pkg_n[nMCB] + m_nDiscardNum[nMCB]) > nDiscardThreshold);
+        if (bReadyToDispatch)
+        {
+            // ä»ç¬¬ 1 ä¸ªæœ‰æ•ˆæ•°æ®åŒ…å¼€å§‹
+            pDBDataPackage.ADFormat_Bit = m_nADBit;
+            pDBDataPackage.nSocketCounter = parsed_pkg_n[nMCB] - nDiscardThreshold + m_nDiscardNum[nMCB];
+            if (pDBDataPackage.nSocketCounter < 1)
+                pDBDataPackage.nSocketCounter = 1;
+            pDBDataPackage.overall_err = overall_err;
+
+            //åªæœ‰DBæœ‰æ•°æ®ä¸”ç¬¬ä¸€ä¸ªDBæ˜¯DAQæ•°æ®åŒ…ï¼Œæ‰å¾€åº”ç”¨ç¨‹åºå‘é€æ•°æ®æ›´æ–°æ¶ˆæ¯
+            if ((pDBDataPackage.Max_DB_board > 0) && (pDBDataPackage.DB_pkg_type[0] == DB_DAQ_PKG) &&
+                (pDBDataPackage.DB_data_len[0] > 0))
+            {
+                if (m_nLogLevel >= gLogLevel2)
+                {
+                    sprintf(tmp,"HMCB(4)%d DB%d dispatch SC_pkg#%d to App.\n",
+                            nMCB, SC_pkg_db_line, pDBDataPackage.SC_pkg_index);
+                    sz_szInfo = tmp;
+                    WriteLogFile(sz_szInfo, gLogLevel2);
+                }
+                //ä¸»æ§åˆ¶ç›’å‰ 2 æ¬¡é‡‡é›†ï¼šé’©é“›ä¿¡å·å¼ºåˆ¶ç½® 0
+                if ((nMCB == 0) && (Update_pkg_n[nMCB] < 2))
+                {
+                    pDBDataPackage.CB_data[2] = pDBDataPackage.CB_data[2] | 0x40;
+                }
+
+                UpdateOnePacketDataToApp_HMCB4(&pDBDataPackage);
+                //ä¸€ä¸ªCBè§£æå®Œæœ€åä¸€ä¸ªDBæ•°æ®åï¼Œæ•°æ®åŒ…è£¹æ•°æ‰å¢1
+                if (nMaxDBLindIndex == pDBDataPackage.DB_line_i)
+                {
+                    Update_pkg_n[nMCB]++;
+                }
+                ////////////////////////////////////////////////////////////////////////////////////////////////////
+                //æ­£ç¡®è§£æä¸€åŒ…æ•°æ®åï¼Œm_nMissAA55Cnt è®¡æ•°æ¸…é›¶
+                m_nMissAA55Cnt[nMCB] = 0;
+                //æ•°æ®é‡‡é›†æ˜¯å¦æˆåŠŸå®Œæˆæ ‡å¿—
+                AtomicStoreL(&m_bPreDAQSucessFlag[nMCB], 1);
+            }
+        }
+        else
+        {
+            //èµ·å§‹é˜¶æ®µä¹Ÿè¦ç»´æŠ¤åŒ…å¤´ç¼“å­˜ï¼ˆé˜²æ­¢ m_MCBDataHeadTmp.scounter ä¸º 0ï¼‰
+            pDBDataPackage.nSocketCounter = parsed_pkg_n[nMCB] - nDiscardThreshold + m_nDiscardNum[nMCB];
+            if (pDBDataPackage.nSocketCounter < 1)
+                pDBDataPackage.nSocketCounter = 1;
+            // æ•°æ®åŒ…å¤´ç»´æŠ¤é€»è¾‘
+            UINT nError_DI = ((~pDBDataPackage.CB_data[2]) & 0xF0) << 4;
+            if (m_bGoudang_S4)
+            {
+                nError_DI = (nError_DI & 0x0B00) + ((nError_DI & 0x0200) << 1);
+            }
+
+            long nPulseCounter = 0;
+            if (m_bHEorCXMode)
+            {
+                nPulseCounter = ((INT32U)pDBDataPackage.CB_data[ 8] << 24) |
+                                ((INT32U)pDBDataPackage.CB_data[ 9] << 16) |
+                                ((INT32U)pDBDataPackage.CB_data[10] <<  8) |
+                                ((INT32U)pDBDataPackage.CB_data[11]);
+                nPulseCounter = nPulseCounter - SC_1st_pkg_TriggCnt[nMCB] - nDiscardThreshold + m_nDiscardNum[nMCB] + 1;
+            }
+            else
+            {
+                nPulseCounter = pDBDataPackage.SC_pkg_index - nDiscardThreshold;
+            }
+            //
+            m_MCBDataHeadTmp[nMCB].head_use.scounter   = pDBDataPackage.nSocketCounter;
+            m_MCBDataHeadTmp[nMCB].head_use.pcounter.l = nPulseCounter;
+            m_MCBDataHeadTmp[nMCB].head_use.accEnergy  = ((nError_DI & 0x0200) == 0) ? 0 : 1;
+            //
+            //é€‚é…ä¸‰èƒ½åŠ é€Ÿå™¨ï¼ˆDI(3)ä¸ºé«˜ï¼Œåˆ™ä¸º0.7MeVï¼›å¦åˆ™ä¸ºé«˜ä½èƒ½ï¼‰
+            if (m_bThreeEnergyAcc_En && ((nError_DI & 0x0800) == 0))
+                m_MCBDataHeadTmp[nMCB].head_use.accEnergy += 2;
+            //
+            // AIN0ï¼ˆ24bit åŸç è½¬æŒ‰ AD ä½å®½çš„åç§»äºŒè¿›åˆ¶ï¼‰
+            m_MCBDataHeadTmp[nMCB].head_use.ain0.ul = ((INT32U)pDBDataPackage.CB_data[4] << 16) |
+                                                      ((INT32U)pDBDataPackage.CB_data[5] <<  8) |
+                                                      ((INT32U)pDBDataPackage.CB_data[6]);
+            if (pDBDataPackage.CB_data[4] & 0x80)
+                m_MCBDataHeadTmp[nMCB].head_use.ain0.ul &= 0x7FFFFF;
+            else
+                m_MCBDataHeadTmp[nMCB].head_use.ain0.ul += 0x800000;
+            //
+            if (m_nADBit < 24)
+                m_MCBDataHeadTmp[nMCB].head_use.ain0.ul >>= (24 - m_nADBit);
+            else
+                m_MCBDataHeadTmp[nMCB].head_use.ain0.ul <<= (m_nADBit - 24);
+            //
+            m_MCBDataHeadTmp[nMCB].head_use.ptsmdata_h = ((INT32U)pDBDataPackage.CB_data[0] << 24) |
+                                                          ((INT32U)pDBDataPackage.CB_data[1] << 16) |
+                                                          ((INT32U)pDBDataPackage.CB_data[2] <<  8) |
+                                                          ((INT32U)pDBDataPackage.CB_data[3]);
+            m_MCBDataHeadTmp[nMCB].head_use.ptsmdata_l = nPulseCounter + nDiscardThreshold;
+            m_MCBDataHeadTmp[nMCB].head_use.ain1.ul    = 0;
+            m_MCBDataHeadTmp[nMCB].head_use.sscnt      = Update_pkg_n[nMCB];
+            m_MCBDataHeadTmp[nMCB].head_use.regError_DI= nError_DI;
+        }
+
+        // ---------- 6) æ¶ˆè´¹æ‰æ•´ä¸ª SC åŒ… ----------
+        local.Consume(SC_pkg_len);
+        consumed += SC_pkg_len;
+    }
+    return true;
 }
 
 //////////////////////////////////////////////////////////////////

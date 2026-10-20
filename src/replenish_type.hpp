@@ -20,6 +20,13 @@ typedef unsigned long       ULONG;
 typedef unsigned long       DWORD;
 typedef long long           LONGLONG;
 typedef unsigned long long  ULONGLONG;
+typedef int                 BOOL;   // V2.0.1.1 BOOL on Linux
+#ifndef TRUE
+#define TRUE  1
+#endif
+#ifndef FALSE
+#define FALSE 0
+#endif
 
 
 

@@ -14,6 +14,7 @@
 /////////////////////////////////////////
 #include "including.h"
 #include "type_def.h"
+#include "MCBDataBuffer.h"
 /////////////////////////////////////////
 #if defined(_MSC_VER) || defined(WIN64) || defined(_WIN64) || defined(__WIN64__) || defined(WIN32) || defined(_WIN32) || defined(__WIN32__) || defined(__NT__)
 
@@ -24,6 +25,9 @@
 #include <iostream>
 #include <fstream>
 #include <mutex>
+#include <thread>
+#include <condition_variable>
+#include <atomic>
 #endif
 #define  MAX_DDCRANGE 7
 #define  MIN_DDCRANGE 0
@@ -100,6 +104,66 @@ public:
     int ConfigureUserParameter_HMCB4(INT8U nDbline, unsigned short nMCB/*=0*/ );
     //
     void FetchMsg_HMCB4(CRequestSocket *pRequestSocket, int nIndex, int nPort);
+
+    // ============================================================
+    // 接收/解析解耦：每个 MCB 一套接收缓冲 + 独立解析线程
+    // （移植自 V2.0.1.1 MCBCtrlC.h 的 MCBParseContext，事件改为 Linux condvar 实现）
+    // ============================================================
+    // 手动重置事件（Windows CreateEvent(NULL,TRUE,FALSE,NULL) 的等价物）：
+    // signal 后保持信号态，直到解析线程自己 clear()，避免丢失唤醒
+    class ManualResetEvent {
+    public:
+        void signal() {
+            std::lock_guard<std::mutex> lk(m_mu);
+            m_signaled = true;
+            m_cv.notify_all();
+        }
+        void clear() {
+            std::lock_guard<std::mutex> lk(m_mu);
+            m_signaled = false;
+        }
+        // 返回 true=信号态，false=超时（对应 WaitForSingleObject 100ms 轮询）
+        bool wait(int ms) {
+            std::unique_lock<std::mutex> lk(m_mu);
+            return m_cv.wait_for(lk, std::chrono::milliseconds(ms),
+                                  [this] { return m_signaled; });
+        }
+    private:
+        std::mutex m_mu;
+        std::condition_variable m_cv;
+        bool m_signaled = false;
+    };
+
+    struct MCBParseContext
+    {
+        CMCBDataBuffer  shared;         // 接收线程写入/解析线程搬走的共享缓冲（csBuf 保护）
+        CMCBDataBuffer  local;          // 解析线程私有缓冲（常驻，摊销拷贝）
+        ManualResetEvent dataEvent;     // 通知解析线程有新数据
+        std::thread     parseThread;    // 解析线程句柄
+        volatile MCB_LONG bStop;        // 通知线程退出
+        std::mutex      csBuf;          // 接收线程与解析线程访问 shared 的互斥
+        // 线程退出同步（StopParseThreads 限时等待，替代 Windows WaitForSingleObject）
+        std::mutex              doneMu;
+        std::condition_variable doneCv;
+        volatile bool           bThreadDone;
+        // 统计
+        unsigned long long totalRecvBytes;
+        unsigned long long totalParsedBytes;
+
+        MCBParseContext() : bStop(0), bThreadDone(false), totalRecvBytes(0), totalParsedBytes(0) {}
+        MCBParseContext(const MCBParseContext&) = delete;
+        MCBParseContext& operator=(const MCBParseContext&) = delete;
+    };
+
+    static bool m_bParseCtxInited;
+    static MCBParseContext g_parseCtx[MAX_MCBNUM];
+    // 解析线程入口
+    static void MCBParseThreadProc(int nMCB);
+    // 启动 / 停止解析线程
+    static bool StartParseThreads();
+    static void StopParseThreads();
+    // 从共享缓冲解析出完整数据包（consumed=本次已消费字节数）
+    static bool ParseBuffer_HMCB4(int nMCB, CMCBDataBuffer& local, ULONG nTarget_pkg_num, size_t& consumed);
 
     void ReadParseData_HMCB4(ULONG pkg_num);
 
@@ -224,7 +288,7 @@ public:
     void GetDMInfo(DMINFO *pDMInfo);
     void GetDMExInfo(DMEXINFO *pDMExInfo);
     //日志相关
-    static void WriteLogFile(std::string lpsz, UINT nLogLevel =0);
+    static void WriteLogFile(std::string lpsz, UINT nLogLevel =0, bool bFlush = true);
     //
     static void WriteDataErrorLogFile(std::string lpsz, UINT nMCB);
 public:
@@ -321,19 +385,21 @@ public:
     //系统及各MCB初始化状态
     //bool m_bMCBxInInitialing =false;
 
-    static int m_MCBRunSts[MAX_MCBNUM]; //bit 0-pre start, 1-pre stop cmd, 2-pre stop normal
-    static int m_MCBReadySts[MAX_MCBNUM]; //bit 0-connection, 1-MB fpga, 2- AD fpga, 3-Reg set
+    // 解耦改造（对照 V2.0.1.1）：以下标志跨接收/解析/主控线程访问，
+    // 类型从 bool/int 改为 volatile MCB_LONG（普通赋值兼容，读取走 AtomicLoadL）
+    static volatile MCB_LONG m_MCBRunSts[MAX_MCBNUM]; //bit 0-pre start, 1-pre stop cmd, 2-pre stop normal
+    static volatile MCB_LONG m_MCBReadySts[MAX_MCBNUM]; //bit 0-connection, 1-MB fpga, 2- AD fpga, 3-Reg set
     bool m_bSetDMInfo[MAX_MCBNUM];  // if set DM info
     //check if slave MCB ready to start
-    //从控制盒是否已启动
+    //从控制盒是否准备就绪
     bool m_bSlaveStart =false;
-    bool m_bPreStart =false;
+    volatile MCB_LONG m_bPreStart =0;
     //是否停止取数
-    static bool m_bPreDataEnd ;
-    static bool m_bPreStop;
-    static bool m_bStart;
+    static volatile MCB_LONG m_bPreDataEnd ;
+    static volatile MCB_LONG m_bPreStop;
+    static volatile MCB_LONG m_bStart;
 	//已收到停止采集命令
-	static bool m_bRecStopCmd;    
+	static volatile MCB_LONG m_bRecStopCmd;
     //是否自动重连
     bool m_bconnectauto;
 
@@ -354,7 +420,7 @@ public:
     //获取到0xA5数据包前已解析出的数据包
     static UINT m_nMiss0XA5PacketCnt[MAX_MCBNUM];
     //上一次数据采集是否成功完成标志
-    static bool m_bPreDAQSucessFlag[MAX_MCBNUM];
+    static volatile MCB_LONG m_bPreDAQSucessFlag[MAX_MCBNUM];
     //探测器模块配置详细参数:MCB个数，探测器数目，行列值，通道总数
     static DMINFOHMCB4 m_DMInfo[MAX_MCBNUM];
     //控制盒相关参数
@@ -377,7 +443,7 @@ public:
     UINT m_nMCBxDByREG[MAX_MCBNUM][MAX_DBLINENUM][MAX_MCBADNUM];   //DM cmd register, bit0~2--DDC232 range
 
 
-    bool m_bDVReady;  // if device ready
+    volatile MCB_LONG m_bDVReady;  // if device ready
     //
     std::string m_szMCBIPAddr;
     //??????????????????IP????
