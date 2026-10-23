@@ -3423,13 +3423,17 @@ void CMCBCtrlC::UpdateOnePacketDataToApp_HMCB4(OneDBLineOnePackage *pDBDataPacka
 	//����̽����ģ��ڶ���̽���������ݡ�
 	//����̽����ģ���DMINFO.nColNum ��̽����������
 	UINT nCh = 0;
-	for(i = 0 ; i < nColNum; i++)
+	// 通道排布：模块（ADM/DM 槽）优先——每模块槽内"列×行"通道连续。
+	// 发生器/实装拓扑下一个模块槽承载完整 nColNum*nRowNum 个通道
+	// （真机 CX1664DE 数据发生器验证：每槽竖读 0..nColNum*nRowNum-1 连续）。
+	// 原列优先排布会把同一逻辑通道的重复镜像铺满线性流，网格/保存均无法呈现模块视图。
+	for(j = 0 ; j < nDMNum; j++)
 	{
-		for(j = 0; j < nDMNum; j++)
+		for(i = 0; i < nColNum; i++)
 		{
 			for(k = 0; k < nRowNum; k++)
 			{
-				nCh = i*nDMNum*nRowNum + j*nRowNum + k;
+				nCh = j*nColNum*nRowNum + i*nRowNum + k;
 				m_MCBData[nMCB].addata[nCh].ul = pnDBlineDetectorData[nMCB][j][i][k];
 				////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 				if(m_nADBit > m_nAppADBit)
