@@ -487,7 +487,7 @@ public:
     //Ì½²âÆ÷Êı¾İ½âÎöÏà¹Ø
     static MCBData m_MCBData[MAX_MCBNUM + 1];
     static MCBData m_MCBDataBackup[MAX_MCBNUM];//Ç°´ÎÊı¾İ±¸·İ
-    static MCBData m_MCBDataTmp; // temporary data for channel adjust
+    static MCBData m_MCBDataTmp[MAX_MCBNUM]; // è§£æçº¿ç¨‹ç§æœ‰ï¼ˆæ¯MCBä¸€ä¸ªï¼Œå¯¹ç…§V2.0.1.1ï¼šå¤šæ¿è§£æçº¿ç¨‹å¹¶å‘ï¼Œå•å®ä¾‹ä¼šæ’•è£‚ï¼‰ // temporary data for channel adjust
     static MCBData_H m_MCBDataHeadTmp[MAX_MCBNUM]; // temporary data for AIN/DI...adjust
     //MCBData_H m_MCBDataHTmp[MAX_MCBNUM]; // temporary data for AIN/DI...adjust
     //unsigned char m_ADOriData[MAX_MCBNUM][MAX_MCBADNUM*MAX_DMROWNUM*MAX_DMCOLNUM*sizeof(long)];

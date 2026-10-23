@@ -48,7 +48,7 @@ using namespace std;
 //#define GLB_DATA_BUF_SIZE	(100000)	//²»ÄÜ³¬¹ı32Î»ÊıµÄ±íÊ¾·¶Î§£¬±ØĞë´óÓÚ1¸öSCÊı¾İ°ü³¤¶È
 #define GLB_DATA_BUF_SIZE	(64*1024*1024)	//²»ÄÜ³¬¹ı32Î»ÊıµÄ±íÊ¾·¶Î§£¬±ØĞë´óÓÚ1¸öSCÊı¾İ°ü³¤¶È
 //
-#define SOCKETBUFSIZE (1440*4)
+#define SOCKETBUFSIZE (65536)   // V2.0.1.1 å¤šç›’å¼ºåŒ–ï¼šå•æ¬¡æ¥æ”¶æå¤§ï¼Œå‡å°‘ç³»ç»Ÿè°ƒç”¨/é˜²å†…æ ¸ç¼“å†²æº¢å‡ºåå‹
 //extern INT8U glb_data_buf[MAX_MCBNUM][GLB_DATA_BUF_SIZE];
 extern std::vector<unsigned char> glb_data_buf_vetor[MAX_MCBNUM];
 #if defined(_MSC_VER) || defined(WIN64) || defined(_WIN64) || defined(__WIN64__) || defined(WIN32) || defined(_WIN32) || defined(__WIN32__) || defined(__NT__)
@@ -2115,6 +2115,16 @@ void CMCBCtrlC::FetchMsg_HMCB4(CRequestSocket *pRequestSocket, int nIndex, int n
             s_dbgRecvCnt = 0; s_dbgRecvBytes = 0; s_dbgRecvT0 = now;
         }
     }
+        // æ¯æ¿é¦–ä¸ªæœ‰æ•ˆåŒ…çš„å‰ 48 å­—èŠ‚ hexï¼ˆä¸‰æ¿æµç»“æ„æ¯”å¯¹ï¼‰
+        if (Rec_Bytelen > 48) {
+            static bool s_dbgFirst[8] = {false};
+            if (!s_dbgFirst[nMCB]) {
+                s_dbgFirst[nMCB] = true;
+                char hx[256] = {0};
+                for (int k = 0; k < 48; k++) sprintf(hx + k*3, "%02X ", chRecv[k]);
+                fprintf(stderr, "[libdbg][first%d] %s\n", nMCB, hx);
+            }
+        }
     m_timeSocketRecData[nMCB] = NucTool::GetTickCount();
 
     // ---- ä¿å­˜åŸå§‹socketæ•°æ®è®°å½•ï¼ˆLevel5 è°ƒè¯•ç”¨ï¼›ä¸åšæ¯ç¬” Flush é™ä½å¼€é”€ï¼‰----
@@ -2319,9 +2329,10 @@ void CMCBCtrlC::MCBParseThreadProc(int nMCB)
             DWORD now = NucTool::GetTickCount();
             if (s_dbgParseT0 == 0) { s_dbgParseT0 = now; s_dbgParsed0 = ctx.totalParsedBytes; }
             if (now - s_dbgParseT0 >= 1000) {
-                fprintf(stderr, "[libdbg][parse] rate=%lluB/s shared=%zu local=%zu start=%ld stop=%ld bStop=%ld\n",
-                        ctx.totalParsedBytes - s_dbgParsed0, ctx.shared.Size(), ctx.local.Size(),
-                        (long)AtomicLoadL(&m_bStart), (long)AtomicLoadL(&m_bPreStop), (long)AtomicLoadL(&ctx.bStop));
+                fprintf(stderr, "[libdbg][parse%d] rate=%lldB/s shared=%zu local=%zu start=%ld stop=%ld bStop=%ld pkg=%u a5miss=%u\n", nMCB,
+                        (long long)(ctx.totalParsedBytes - s_dbgParsed0), ctx.shared.Size(), ctx.local.Size(),
+                        (long)AtomicLoadL(&m_bStart), (long)AtomicLoadL(&m_bPreStop), (long)AtomicLoadL(&ctx.bStop),
+                        parsed_pkg_n[nMCB], m_nMiss0XA5PacketCnt[nMCB]);
                 s_dbgParseT0 = now; s_dbgParsed0 = ctx.totalParsedBytes;
             }
         }
@@ -3480,10 +3491,10 @@ void CMCBCtrlC::UpdateOnePacketDataToApp_HMCB4(OneDBLineOnePackage *pDBDataPacka
 	int nIndex = nMCB;
 	////////////////////////////////////////////////////////////////////////
 	//HMCBÄ¬ÈÏÀë¿ØÖÆºĞ×îÔ¶µÄÌ½²âÆ÷Ä£¿éÎªµÚÒ»¸öÌ½²âÆ÷Ä£¿é£¬ÓëMCB-H¶¨ÒåÏà·´£¬Ä¬ÈÏ¶ÔËùÓĞHMCB»òDB-Line°´3-MODULE·½°¸µ÷ÕûÍ¨µÀË³Ğò¡£
-//	memcpy(m_MCBDataTmp.addata, m_MCBData[nIndex].addata, m_DMInfo[nIndex].nAllChnNum *sizeof(UINT));
+//	memcpy(m_MCBDataTmp[nIndex].addata, m_MCBData[nIndex].addata, m_DMInfo[nIndex].nAllChnNum *sizeof(UINT));
 //	for (i =0; i<int(m_DMInfo[nIndex].nAllChnNum); i++)
 //	{
-//		m_MCBData[nIndex].addata[i].ul = m_MCBDataTmp.addata[i/(m_DMInfo[nIndex].nRowNum*m_DMInfo[nIndex].nDMNum)*m_DMInfo[nIndex].nRowNum*m_DMInfo[nIndex].nDMNum
+//		m_MCBData[nIndex].addata[i].ul = m_MCBDataTmp[nIndex].addata[i/(m_DMInfo[nIndex].nRowNum*m_DMInfo[nIndex].nDMNum)*m_DMInfo[nIndex].nRowNum*m_DMInfo[nIndex].nDMNum
 //			+((m_DMInfo[nIndex].nDMNum-1)-(i/m_DMInfo[nIndex].nRowNum)%m_DMInfo[nIndex].nDMNum)*m_DMInfo[nIndex].nRowNum +i%m_DMInfo[nIndex].nRowNum].ul;
 //	}
 	////////////////////////////////////////////////////////////////////////
@@ -3492,34 +3503,34 @@ void CMCBCtrlC::UpdateOnePacketDataToApp_HMCB4(OneDBLineOnePackage *pDBDataPacka
 	{
 		if (m_nAdjChn[j])  //channel order adjust
 		{
-			memcpy(m_MCBDataTmp.addata, m_MCBData[nIndex].addata, m_DMInfo[nIndex].nAllChnNum *sizeof(UINT));
+			memcpy(m_MCBDataTmp[nIndex].addata, m_MCBData[nIndex].addata, m_DMInfo[nIndex].nAllChnNum *sizeof(UINT));
 			switch(m_nAdjChn[j])  //adjust mode: 0-NONE, 1-ROW, 2-COLUMN, 3-MODULE, 4-ALL_ROW
 			{
 			case 1:
 				for (i =0; i<int(m_DMInfo[nIndex].nAllChnNum); i++)
 				{
-					m_MCBData[nIndex].addata[i].ul = m_MCBDataTmp.addata[i/m_DMInfo[nIndex].nRowNum*m_DMInfo[nIndex].nRowNum+
+					m_MCBData[nIndex].addata[i].ul = m_MCBDataTmp[nIndex].addata[i/m_DMInfo[nIndex].nRowNum*m_DMInfo[nIndex].nRowNum+
 						m_DMInfo[nIndex].nRowNum-1-i%m_DMInfo[nIndex].nRowNum].ul;
 				}
 				break;
 			case 2:
 				for (i =0; i<int(m_DMInfo[nIndex].nAllChnNum); i++)
 				{
-					m_MCBData[nIndex].addata[i].ul = m_MCBDataTmp.addata[m_DMInfo[nIndex].nRowNum*m_DMInfo[nIndex].nDMNum*(m_DMInfo[nIndex].nColNum-1-(i/(m_DMInfo[nIndex].nRowNum*m_DMInfo[nIndex].nDMNum)))
+					m_MCBData[nIndex].addata[i].ul = m_MCBDataTmp[nIndex].addata[m_DMInfo[nIndex].nRowNum*m_DMInfo[nIndex].nDMNum*(m_DMInfo[nIndex].nColNum-1-(i/(m_DMInfo[nIndex].nRowNum*m_DMInfo[nIndex].nDMNum)))
 						+i%(m_DMInfo[nIndex].nRowNum*m_DMInfo[nIndex].nDMNum)].ul;
 				}
 				break;
 			case 3:
 				for (i =0; i<int(m_DMInfo[nIndex].nAllChnNum); i++)
 				{
-					m_MCBData[nIndex].addata[i].ul = m_MCBDataTmp.addata[i/(m_DMInfo[nIndex].nRowNum*m_DMInfo[nIndex].nDMNum)*m_DMInfo[nIndex].nRowNum*m_DMInfo[nIndex].nDMNum 
+					m_MCBData[nIndex].addata[i].ul = m_MCBDataTmp[nIndex].addata[i/(m_DMInfo[nIndex].nRowNum*m_DMInfo[nIndex].nDMNum)*m_DMInfo[nIndex].nRowNum*m_DMInfo[nIndex].nDMNum 
 						+((m_DMInfo[nIndex].nDMNum-1)-(i/m_DMInfo[nIndex].nRowNum)%m_DMInfo[nIndex].nDMNum)*m_DMInfo[nIndex].nRowNum +i%m_DMInfo[nIndex].nRowNum].ul;
 				}
 				break;
 			case 4:
 				for (i =0; i<int(m_DMInfo[nIndex].nAllChnNum); i++)
 				{
-					m_MCBData[nIndex].addata[i].ul = m_MCBDataTmp.addata[i/(m_DMInfo[nIndex].nRowNum*m_DMInfo[nIndex].nDMNum)*(m_DMInfo[nIndex].nRowNum*m_DMInfo[nIndex].nDMNum)+
+					m_MCBData[nIndex].addata[i].ul = m_MCBDataTmp[nIndex].addata[i/(m_DMInfo[nIndex].nRowNum*m_DMInfo[nIndex].nDMNum)*(m_DMInfo[nIndex].nRowNum*m_DMInfo[nIndex].nDMNum)+
 						m_DMInfo[nIndex].nRowNum*m_DMInfo[nIndex].nDMNum-1-i%(m_DMInfo[nIndex].nRowNum*m_DMInfo[nIndex].nDMNum)].ul;
 				}
 				break;
@@ -3539,34 +3550,34 @@ void CMCBCtrlC::UpdateOnePacketDataToApp_HMCB4(OneDBLineOnePackage *pDBDataPacka
 	{
 		if (m_nMCBxAdjChn[nIndex][j])  //channel order adjust
 		{
-			memcpy(m_MCBDataTmp.addata, m_MCBData[nIndex].addata, m_DMInfo[nIndex].nAllChnNum *sizeof(UINT));
+			memcpy(m_MCBDataTmp[nIndex].addata, m_MCBData[nIndex].addata, m_DMInfo[nIndex].nAllChnNum *sizeof(UINT));
 			switch(m_nMCBxAdjChn[nIndex][j])  //adjust mode: 0-NONE, 1-ROW, 2-COLUMN, 3-MODULE, 4-ALL_ROW
 			{
 			case 1:
 				for (i =0; i<int(m_DMInfo[nIndex].nAllChnNum); i++)
 				{
-					m_MCBData[nIndex].addata[i].ul = m_MCBDataTmp.addata[i/m_DMInfo[nIndex].nRowNum*m_DMInfo[nIndex].nRowNum+
+					m_MCBData[nIndex].addata[i].ul = m_MCBDataTmp[nIndex].addata[i/m_DMInfo[nIndex].nRowNum*m_DMInfo[nIndex].nRowNum+
 						m_DMInfo[nIndex].nRowNum-1-i%m_DMInfo[nIndex].nRowNum].ul;
 				}
 				break;
 			case 2:
 				for (i =0; i<int(m_DMInfo[nIndex].nAllChnNum); i++)
 				{
-					m_MCBData[nIndex].addata[i].ul = m_MCBDataTmp.addata[m_DMInfo[nIndex].nRowNum*m_DMInfo[nIndex].nDMNum*(m_DMInfo[nIndex].nColNum-1-(i/(m_DMInfo[nIndex].nRowNum*m_DMInfo[nIndex].nDMNum)))
+					m_MCBData[nIndex].addata[i].ul = m_MCBDataTmp[nIndex].addata[m_DMInfo[nIndex].nRowNum*m_DMInfo[nIndex].nDMNum*(m_DMInfo[nIndex].nColNum-1-(i/(m_DMInfo[nIndex].nRowNum*m_DMInfo[nIndex].nDMNum)))
 						+i%(m_DMInfo[nIndex].nRowNum*m_DMInfo[nIndex].nDMNum)].ul;
 				}
 				break;
 			case 3:
 				for (i =0; i<int(m_DMInfo[nIndex].nAllChnNum); i++)
 				{
-					m_MCBData[nIndex].addata[i].ul = m_MCBDataTmp.addata[i/(m_DMInfo[nIndex].nRowNum*m_DMInfo[nIndex].nDMNum)*m_DMInfo[nIndex].nRowNum*m_DMInfo[nIndex].nDMNum 
+					m_MCBData[nIndex].addata[i].ul = m_MCBDataTmp[nIndex].addata[i/(m_DMInfo[nIndex].nRowNum*m_DMInfo[nIndex].nDMNum)*m_DMInfo[nIndex].nRowNum*m_DMInfo[nIndex].nDMNum 
 						+((m_DMInfo[nIndex].nDMNum-1)-(i/m_DMInfo[nIndex].nRowNum)%m_DMInfo[nIndex].nDMNum)*m_DMInfo[nIndex].nRowNum +i%m_DMInfo[nIndex].nRowNum].ul;
 				}
 				break;
 			case 4:
 				for (i =0; i<int(m_DMInfo[nIndex].nAllChnNum); i++)
 				{
-					m_MCBData[nIndex].addata[i].ul = m_MCBDataTmp.addata[i/(m_DMInfo[nIndex].nRowNum*m_DMInfo[nIndex].nDMNum)*(m_DMInfo[nIndex].nRowNum*m_DMInfo[nIndex].nDMNum)+
+					m_MCBData[nIndex].addata[i].ul = m_MCBDataTmp[nIndex].addata[i/(m_DMInfo[nIndex].nRowNum*m_DMInfo[nIndex].nDMNum)*(m_DMInfo[nIndex].nRowNum*m_DMInfo[nIndex].nDMNum)+
 						m_DMInfo[nIndex].nRowNum*m_DMInfo[nIndex].nDMNum-1-i%(m_DMInfo[nIndex].nRowNum*m_DMInfo[nIndex].nDMNum)].ul;
 				}
 				break;
@@ -3613,7 +3624,7 @@ void CMCBCtrlC::UpdateOnePacketDataToApp_HMCB4(OneDBLineOnePackage *pDBDataPacka
 	if((m_nSectionFirstADNo[0] > 0) && (m_nSectionLastADNo[0] > 0) && (m_nSectionLastADNo[0] >= m_nSectionFirstADNo[0]))
 	{
 		//
-		memcpy(m_MCBDataTmp.addata, m_MCBData[nIndex].addata, m_DMInfo[nIndex].nAllChnNum *sizeof(UINT));
+		memcpy(m_MCBDataTmp[nIndex].addata, m_MCBData[nIndex].addata, m_DMInfo[nIndex].nAllChnNum *sizeof(UINT));
 		for (j = 0; j < MAX_SECTIONADJNUM; j++)
 		{
 			if((m_nSectionFirstADNo[j] > 0) && (m_nSectionLastADNo[j] > 0) && (m_nSectionLastADNo[j] >= m_nSectionFirstADNo[j]))
@@ -3635,7 +3646,7 @@ void CMCBCtrlC::UpdateOnePacketDataToApp_HMCB4(OneDBLineOnePackage *pDBDataPacka
 					nPreSectionEndRowNum = nPreSectionADNum*m_DMInfo[nIndex].nRowNum + k*m_DMInfo[nIndex].nDMNum*m_DMInfo[nIndex].nRowNum;
 					for(i = 0; i < nSectionRowNum; i++)
 					{
-						m_MCBData[nIndex].addata[nPreSectionEndRowNum + i].ul = m_MCBDataTmp.addata[nSectionFirstRowNo+i].ul;
+						m_MCBData[nIndex].addata[nPreSectionEndRowNum + i].ul = m_MCBDataTmp[nIndex].addata[nSectionFirstRowNo+i].ul;
 					}
 				}
 			}
@@ -3689,7 +3700,7 @@ void CMCBCtrlC::UpdateOnePacketDataToApp_HMCB4(OneDBLineOnePackage *pDBDataPacka
 	if((m_nMCBxSectionFirstADNo[nIndex][0] > 0) && (m_nMCBxSectionLastADNo[nIndex][0] > 0) && (m_nMCBxSectionLastADNo[nIndex][0] >= m_nMCBxSectionFirstADNo[nIndex][0]))
 	{
 		//
-		memcpy(m_MCBDataTmp.addata, m_MCBData[nIndex].addata, m_DMInfo[nIndex].nAllChnNum *sizeof(UINT));
+		memcpy(m_MCBDataTmp[nIndex].addata, m_MCBData[nIndex].addata, m_DMInfo[nIndex].nAllChnNum *sizeof(UINT));
 		for (j = 0; j < MAX_SECTIONADJNUM; j++)
 		{
 			if((m_nMCBxSectionFirstADNo[nIndex][j] > 0) && (m_nMCBxSectionLastADNo[nIndex][j] > 0) && (m_nMCBxSectionLastADNo[nIndex][j] >= m_nMCBxSectionFirstADNo[nIndex][j]))
@@ -3711,7 +3722,7 @@ void CMCBCtrlC::UpdateOnePacketDataToApp_HMCB4(OneDBLineOnePackage *pDBDataPacka
 					nPreSectionEndRowNum = nPreSectionADNum*m_DMInfo[nIndex].nRowNum + k*m_DMInfo[nIndex].nDMNum*m_DMInfo[nIndex].nRowNum;
 					for(i = 0; i < nSectionRowNum; i++)
 					{
-						m_MCBData[nIndex].addata[nPreSectionEndRowNum + i].ul = m_MCBDataTmp.addata[nSectionFirstRowNo+i].ul;
+						m_MCBData[nIndex].addata[nPreSectionEndRowNum + i].ul = m_MCBDataTmp[nIndex].addata[nSectionFirstRowNo+i].ul;
 					}
 				}
 			}
@@ -3912,12 +3923,12 @@ void CMCBCtrlC::UpdateOnePacketDataToApp_HMCB4(OneDBLineOnePackage *pDBDataPacka
                     //¿½±´Ç°´ÎÊı¾İ±¸·İÊı¾İ
                     memcpy(&m_MCBDataTmp, &m_MCBDataBackup[nMCB], sizeof(MCBData));//¿½±´Ç°´ÎÊı¾İ±¸·İ
                     //copy current packet head to m_MCBDataTmp????????????????
-                    memcpy(&m_MCBDataTmp.d_head, &m_MCBData[nMCB].d_head, sizeof(MCBData_H));   //temporarily save current MCBData_H
+                    memcpy(&m_MCBDataTmp[nIndex].d_head, &m_MCBData[nMCB].d_head, sizeof(MCBData_H));   //temporarily save current MCBData_H
                     ////////////////////////////////////////
                     //??????????????????????????
-                    m_MCBDataTmp.d_head.head_use.scounter = m_MCBDataTmp.d_head.head_use.scounter + i;//nSocketCounter;	// socket packet serial number, self-add//????????????,1????
-                    m_MCBDataTmp.d_head.head_use.pcounter.l = m_lPrePulseCnt[nMCB] + 1 + i;//nPulseCounter;	// pulse trigger number//??????????????????????
-                    m_MCBDataTmp.d_head.head_use.accEnergy = -1;//??????????????????
+                    m_MCBDataTmp[nIndex].d_head.head_use.scounter = m_MCBDataTmp[nIndex].d_head.head_use.scounter + i;//nSocketCounter;	// socket packet serial number, self-add//????????????,1????
+                    m_MCBDataTmp[nIndex].d_head.head_use.pcounter.l = m_lPrePulseCnt[nMCB] + 1 + i;//nPulseCounter;	// pulse trigger number//??????????????????????
+                    m_MCBDataTmp[nIndex].d_head.head_use.accEnergy = -1;//??????????????????
                     ////////////////////////////////////////
                     parsed_pkg_n[nMCB]++;//????????????????????????????1
                     //????????????????
@@ -3930,7 +3941,7 @@ void CMCBCtrlC::UpdateOnePacketDataToApp_HMCB4(OneDBLineOnePackage *pDBDataPacka
 					{
 						if(1 == m_nDeviceTypeID)
 						{	
-							if(1 == m_MCBDataTmp.d_head.head_use.accEnergy)
+							if(1 == m_MCBDataTmp[nIndex].d_head.head_use.accEnergy)
 							{
 								m_nXRayGenN = 0;
 							}
@@ -3938,23 +3949,23 @@ void CMCBCtrlC::UpdateOnePacketDataToApp_HMCB4(OneDBLineOnePackage *pDBDataPacka
 							{
 								m_nXRayGenN++;
 							}
-							m_MCBDataTmp.d_head.head_use.accEnergy = (LONG)m_nXRayGenN;
+							m_MCBDataTmp[nIndex].d_head.head_use.accEnergy = (LONG)m_nXRayGenN;
 						}
 					}
 					////////////////////////////////////////
-                    gCallBack(MCB_MSG_DATA, WPARAM(&m_MCBDataTmp), nMCB);
+                    gCallBack(MCB_MSG_DATA, WPARAM(&m_MCBDataTmp[nMCB]), nMCB);
                     //
                     memset(tmp,0,512);
-                    sprintf(tmp,"HMCB%d ZeroPadding one frame data at %d(socket)/%d(pluse).\n", nMCB, m_MCBDataTmp.d_head.head_use.scounter, m_MCBDataTmp.d_head.head_use.pcounter.l);
+                    sprintf(tmp,"HMCB%d ZeroPadding one frame data at %d(socket)/%d(pluse).\n", nMCB, m_MCBDataTmp[nIndex].d_head.head_use.scounter, m_MCBDataTmp[nIndex].d_head.head_use.pcounter.l);
                     sz_szInfo = tmp;
                     WriteLogFile(sz_szInfo);
                     ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-                    if(1 == ((m_MCBDataTmp.d_head.head_use.scounter) % 100))
+                    if(1 == ((m_MCBDataTmp[nIndex].d_head.head_use.scounter) % 100))
                     {
                         memset(tmp,0,512);
                         sprintf(tmp,"HMCB%d software socket data counts: %d, hardware pluse counts: %d, differ:%d\n",
-                                         nMCB, m_MCBDataTmp.d_head.head_use.scounter, m_MCBDataTmp.d_head.head_use.pcounter.l,
-                                m_MCBDataTmp.d_head.head_use.pcounter.l - m_MCBDataTmp.d_head.head_use.scounter);
+                                         nMCB, m_MCBDataTmp[nIndex].d_head.head_use.scounter, m_MCBDataTmp[nIndex].d_head.head_use.pcounter.l,
+                                m_MCBDataTmp[nIndex].d_head.head_use.pcounter.l - m_MCBDataTmp[nIndex].d_head.head_use.scounter);
                         sz_szInfo = tmp;
 
                         WriteLogFile(sz_szInfo);

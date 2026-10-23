@@ -117,7 +117,7 @@ INT32U gbl_data_buf_rdaddr[MAX_MCBNUM] = {0};			//¼ÇÂ¼ÏÂÒ»¸öÊý¾ÝµÄ¶ÁÈ¡µØÖ·
 INT32S gbl_sc_pkg_index[MAX_MCBNUM] = { 0};			//¼ÇÂ¼¸÷¸öDB LineÉÏÒ»¸ösc pkgµÄ°ü±àºÅ
 //
 //Ò»¸öDBLineµÄsize= 10×Ö½ÚÂß¼­ + DBÊý*Ò»¸öDB°üsize + 1¸öCB°ü×Ö½Ú
-INT32U gbl_DBLine_Size[MAX_MCBNUM] = { 0 };
+INT32U gbl_DBLine_Size[MAX_MCBNUM][MAX_DBLINENUM] = { 0 };   // å¯¹é½ Windows V2 å®šä¹‰ï¼ˆåŽŸ Linux ç‰ˆè¯¯å†™ä¸ºä¸€ç»´ï¼Œå¤šæ¿æ—¶ [n][d] è¶Šç•Œè¯»åˆ°é‚»å±…å˜é‡ï¼Œè§£æžçº¿ç¨‹ minSize å˜ UINT_MAX æ°¸ç­‰åŠåŒ…ï¼‰
 
 //Ò»¸öMCBµÄsize= ¸ÃMCBµÄËùÓÐDBLineµÄsizeÖ®ºÍ
 INT32U gbl_MCBTotal_Size[MAX_MCBNUM] = { 0 };

@@ -299,6 +299,12 @@ bool CRequestSocket::Connect(const std::string &strHostAddr, const int &nHostPor
     tv.tv_sec = 1;
     tv.tv_usec = 0;
     setsockopt(m_socket->native_handle(), SOL_SOCKET, SO_RCVTIMEO, (void *)&tv , sizeof(tv));
+    /* 多盒强化：显式加大接收缓冲。默认 autotune 在 26MB/s/盒 流速下只给 ~130KB，
+     * 应用取数稍有抖动即内核缓冲溢出，设备 TCP 窗口反压，多盒呈轮流收数。 */
+    {
+        int rcvbuf = 4 * 1024 * 1024;
+        setsockopt(m_socket->native_handle(), SOL_SOCKET, SO_RCVBUF, (void *)&rcvbuf , sizeof(rcvbuf));
+    }
 
 
     //if(m_socket->is_open())

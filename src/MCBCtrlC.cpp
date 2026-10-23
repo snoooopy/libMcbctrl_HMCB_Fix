@@ -66,7 +66,7 @@ static char THIS_FILE[]=__FILE__;
 #ifdef VC6_BUILD		 // Build project with VC6
 #define strcpy_s strcpy  // use strcpy when use VC6
 #endif
-#define SOCKETBUFSIZE (1440*4)
+#define SOCKETBUFSIZE (65536)   // V2.0.1.1 多盒强化：单次接收提大，减少系统调用/防内核缓冲溢出反压
 //MCB 线程
 extern CMCBThread* gpMCBThread;
 //日志记录水平
@@ -201,7 +201,7 @@ MCBData CMCBCtrlC::m_MCBData[MAX_MCBNUM + 1];
 //
 MCBData CMCBCtrlC::m_MCBDataBackup[MAX_MCBNUM];//前次数据备份
 //
-MCBData CMCBCtrlC::m_MCBDataTmp;
+MCBData CMCBCtrlC::m_MCBDataTmp[MAX_MCBNUM];
 MCBData_H CMCBCtrlC::m_MCBDataHeadTmp[MAX_MCBNUM]; // temporary data for AIN/DI...adjust
 
 long CMCBCtrlC::pnDBlineDetectorData[MAX_MCBNUM][MAX_MCBADNUM][MAX_DMCOLNUM][MAX_DMROWNUM];
@@ -9570,10 +9570,10 @@ void CMCBCtrlC::UpdateOnePacketDataToApp(OneDBLineOnePackage *pDBDataPackage)
     int nIndex = nMCB;
     ////////////////////////////////////////////////////////////////////////
     //HMCB默认离控制盒最远的探测器模块为第一个探测器模块，与MCB-H定义相反，默认对所有HMCB或DB-Line按3-MODULE方案调整通道顺序。
-    memcpy(m_MCBDataTmp.addata, m_MCBData[nIndex].addata, m_DMInfo[nIndex].nAllChnNum *sizeof(UINT));
+    memcpy(m_MCBDataTmp[nIndex].addata, m_MCBData[nIndex].addata, m_DMInfo[nIndex].nAllChnNum *sizeof(UINT));
     for (i =0; i<int(m_DMInfo[nIndex].nAllChnNum); i++)
     {
-        m_MCBData[nIndex].addata[i].ul = m_MCBDataTmp.addata[i/(m_DMInfo[nIndex].nRowNum*m_DMInfo[nIndex].nDMNum)*m_DMInfo[nIndex].nRowNum*m_DMInfo[nIndex].nDMNum
+        m_MCBData[nIndex].addata[i].ul = m_MCBDataTmp[nIndex].addata[i/(m_DMInfo[nIndex].nRowNum*m_DMInfo[nIndex].nDMNum)*m_DMInfo[nIndex].nRowNum*m_DMInfo[nIndex].nDMNum
                                                              +((m_DMInfo[nIndex].nDMNum-1)-(i/m_DMInfo[nIndex].nRowNum)%m_DMInfo[nIndex].nDMNum)*m_DMInfo[nIndex].nRowNum +i%m_DMInfo[nIndex].nRowNum].ul;
     }
     ////////////////////////////////////////////////////////////////////////////////////////////////
@@ -9589,34 +9589,34 @@ void CMCBCtrlC::UpdateOnePacketDataToApp(OneDBLineOnePackage *pDBDataPackage)
     {
         if (m_nAdjChn[j])  //channel order adjust
         {
-            memcpy(m_MCBDataTmp.addata, m_MCBData[nIndex].addata, m_DMInfo[nIndex].nAllChnNum *sizeof(UINT));
+            memcpy(m_MCBDataTmp[nIndex].addata, m_MCBData[nIndex].addata, m_DMInfo[nIndex].nAllChnNum *sizeof(UINT));
             switch(m_nAdjChn[j])  //adjust mode: 0-NONE, 1-ROW, 2-COLUMN, 3-MODULE, 4-ALL_ROW
             {
             case 1:
                 for (i =0; i<int(m_DMInfo[nIndex].nAllChnNum); i++)
                 {
-                    m_MCBData[nIndex].addata[i].ul = m_MCBDataTmp.addata[i/m_DMInfo[nIndex].nRowNum*m_DMInfo[nIndex].nRowNum+
+                    m_MCBData[nIndex].addata[i].ul = m_MCBDataTmp[nIndex].addata[i/m_DMInfo[nIndex].nRowNum*m_DMInfo[nIndex].nRowNum+
                                                                          m_DMInfo[nIndex].nRowNum-1-i%m_DMInfo[nIndex].nRowNum].ul;
                 }
                 break;
             case 2:
                 for (i =0; i<int(m_DMInfo[nIndex].nAllChnNum); i++)
                 {
-                    m_MCBData[nIndex].addata[i].ul = m_MCBDataTmp.addata[m_DMInfo[nIndex].nRowNum*m_DMInfo[nIndex].nDMNum*(m_DMInfo[nIndex].nColNum-1-(i/(m_DMInfo[nIndex].nRowNum*m_DMInfo[nIndex].nDMNum)))
+                    m_MCBData[nIndex].addata[i].ul = m_MCBDataTmp[nIndex].addata[m_DMInfo[nIndex].nRowNum*m_DMInfo[nIndex].nDMNum*(m_DMInfo[nIndex].nColNum-1-(i/(m_DMInfo[nIndex].nRowNum*m_DMInfo[nIndex].nDMNum)))
                                                                          +i%(m_DMInfo[nIndex].nRowNum*m_DMInfo[nIndex].nDMNum)].ul;
                 }
                 break;
             case 3:
                 for (i =0; i<int(m_DMInfo[nIndex].nAllChnNum); i++)
                 {
-                    m_MCBData[nIndex].addata[i].ul = m_MCBDataTmp.addata[i/(m_DMInfo[nIndex].nRowNum*m_DMInfo[nIndex].nDMNum)*m_DMInfo[nIndex].nRowNum*m_DMInfo[nIndex].nDMNum
+                    m_MCBData[nIndex].addata[i].ul = m_MCBDataTmp[nIndex].addata[i/(m_DMInfo[nIndex].nRowNum*m_DMInfo[nIndex].nDMNum)*m_DMInfo[nIndex].nRowNum*m_DMInfo[nIndex].nDMNum
                                                                          +((m_DMInfo[nIndex].nDMNum-1)-(i/m_DMInfo[nIndex].nRowNum)%m_DMInfo[nIndex].nDMNum)*m_DMInfo[nIndex].nRowNum +i%m_DMInfo[nIndex].nRowNum].ul;
                 }
                 break;
             case 4:
                 for (i =0; i<int(m_DMInfo[nIndex].nAllChnNum); i++)
                 {
-                    m_MCBData[nIndex].addata[i].ul = m_MCBDataTmp.addata[i/(m_DMInfo[nIndex].nRowNum*m_DMInfo[nIndex].nDMNum)*(m_DMInfo[nIndex].nRowNum*m_DMInfo[nIndex].nDMNum)+
+                    m_MCBData[nIndex].addata[i].ul = m_MCBDataTmp[nIndex].addata[i/(m_DMInfo[nIndex].nRowNum*m_DMInfo[nIndex].nDMNum)*(m_DMInfo[nIndex].nRowNum*m_DMInfo[nIndex].nDMNum)+
                                                                          m_DMInfo[nIndex].nRowNum*m_DMInfo[nIndex].nDMNum-1-i%(m_DMInfo[nIndex].nRowNum*m_DMInfo[nIndex].nDMNum)].ul;
                 }
                 break;
@@ -9636,34 +9636,34 @@ void CMCBCtrlC::UpdateOnePacketDataToApp(OneDBLineOnePackage *pDBDataPackage)
     {
         if (m_nMCBxAdjChn[nIndex][j])  //channel order adjust
         {
-            memcpy(m_MCBDataTmp.addata, m_MCBData[nIndex].addata, m_DMInfo[nIndex].nAllChnNum *sizeof(UINT));
+            memcpy(m_MCBDataTmp[nIndex].addata, m_MCBData[nIndex].addata, m_DMInfo[nIndex].nAllChnNum *sizeof(UINT));
             switch(m_nMCBxAdjChn[nIndex][j])  //adjust mode: 0-NONE, 1-ROW, 2-COLUMN, 3-MODULE, 4-ALL_ROW
             {
             case 1:
                 for (i =0; i<int(m_DMInfo[nIndex].nAllChnNum); i++)
                 {
-                    m_MCBData[nIndex].addata[i].ul = m_MCBDataTmp.addata[i/m_DMInfo[nIndex].nRowNum*m_DMInfo[nIndex].nRowNum+
+                    m_MCBData[nIndex].addata[i].ul = m_MCBDataTmp[nIndex].addata[i/m_DMInfo[nIndex].nRowNum*m_DMInfo[nIndex].nRowNum+
                                                                          m_DMInfo[nIndex].nRowNum-1-i%m_DMInfo[nIndex].nRowNum].ul;
                 }
                 break;
             case 2:
                 for (i =0; i<int(m_DMInfo[nIndex].nAllChnNum); i++)
                 {
-                    m_MCBData[nIndex].addata[i].ul = m_MCBDataTmp.addata[m_DMInfo[nIndex].nRowNum*m_DMInfo[nIndex].nDMNum*(m_DMInfo[nIndex].nColNum-1-(i/(m_DMInfo[nIndex].nRowNum*m_DMInfo[nIndex].nDMNum)))
+                    m_MCBData[nIndex].addata[i].ul = m_MCBDataTmp[nIndex].addata[m_DMInfo[nIndex].nRowNum*m_DMInfo[nIndex].nDMNum*(m_DMInfo[nIndex].nColNum-1-(i/(m_DMInfo[nIndex].nRowNum*m_DMInfo[nIndex].nDMNum)))
                                                                          +i%(m_DMInfo[nIndex].nRowNum*m_DMInfo[nIndex].nDMNum)].ul;
                 }
                 break;
             case 3:
                 for (i =0; i<int(m_DMInfo[nIndex].nAllChnNum); i++)
                 {
-                    m_MCBData[nIndex].addata[i].ul = m_MCBDataTmp.addata[i/(m_DMInfo[nIndex].nRowNum*m_DMInfo[nIndex].nDMNum)*m_DMInfo[nIndex].nRowNum*m_DMInfo[nIndex].nDMNum
+                    m_MCBData[nIndex].addata[i].ul = m_MCBDataTmp[nIndex].addata[i/(m_DMInfo[nIndex].nRowNum*m_DMInfo[nIndex].nDMNum)*m_DMInfo[nIndex].nRowNum*m_DMInfo[nIndex].nDMNum
                                                                          +((m_DMInfo[nIndex].nDMNum-1)-(i/m_DMInfo[nIndex].nRowNum)%m_DMInfo[nIndex].nDMNum)*m_DMInfo[nIndex].nRowNum +i%m_DMInfo[nIndex].nRowNum].ul;
                 }
                 break;
             case 4:
                 for (i =0; i<int(m_DMInfo[nIndex].nAllChnNum); i++)
                 {
-                    m_MCBData[nIndex].addata[i].ul = m_MCBDataTmp.addata[i/(m_DMInfo[nIndex].nRowNum*m_DMInfo[nIndex].nDMNum)*(m_DMInfo[nIndex].nRowNum*m_DMInfo[nIndex].nDMNum)+
+                    m_MCBData[nIndex].addata[i].ul = m_MCBDataTmp[nIndex].addata[i/(m_DMInfo[nIndex].nRowNum*m_DMInfo[nIndex].nDMNum)*(m_DMInfo[nIndex].nRowNum*m_DMInfo[nIndex].nDMNum)+
                                                                          m_DMInfo[nIndex].nRowNum*m_DMInfo[nIndex].nDMNum-1-i%(m_DMInfo[nIndex].nRowNum*m_DMInfo[nIndex].nDMNum)].ul;
                 }
                 break;
@@ -9710,7 +9710,7 @@ void CMCBCtrlC::UpdateOnePacketDataToApp(OneDBLineOnePackage *pDBDataPackage)
     if((m_nSectionFirstADNo[0] > 0) && (m_nSectionLastADNo[0] > 0) && (m_nSectionLastADNo[0] >= m_nSectionFirstADNo[0]))
     {
         //
-        memcpy(m_MCBDataTmp.addata, m_MCBData[nIndex].addata, m_DMInfo[nIndex].nAllChnNum *sizeof(UINT));
+        memcpy(m_MCBDataTmp[nIndex].addata, m_MCBData[nIndex].addata, m_DMInfo[nIndex].nAllChnNum *sizeof(UINT));
         for (j = 0; j < MAX_SECTIONADJNUM; j++)
         {
             if((m_nSectionFirstADNo[j] > 0) && (m_nSectionLastADNo[j] > 0) && (m_nSectionLastADNo[j] >= m_nSectionFirstADNo[j]))
@@ -9732,7 +9732,7 @@ void CMCBCtrlC::UpdateOnePacketDataToApp(OneDBLineOnePackage *pDBDataPackage)
                     nPreSectionEndRowNum = nPreSectionADNum*m_DMInfo[nIndex].nRowNum + k*m_DMInfo[nIndex].nDMNum*m_DMInfo[nIndex].nRowNum;
                     for(i = 0; i < nSectionRowNum; i++)
                     {
-                        m_MCBData[nIndex].addata[nPreSectionEndRowNum + i].ul = m_MCBDataTmp.addata[nSectionFirstRowNo+i].ul;
+                        m_MCBData[nIndex].addata[nPreSectionEndRowNum + i].ul = m_MCBDataTmp[nIndex].addata[nSectionFirstRowNo+i].ul;
                     }
                 }
             }
@@ -9786,7 +9786,7 @@ void CMCBCtrlC::UpdateOnePacketDataToApp(OneDBLineOnePackage *pDBDataPackage)
     if((m_nMCBxSectionFirstADNo[nIndex][0] > 0) && (m_nMCBxSectionLastADNo[nIndex][0] > 0) && (m_nMCBxSectionLastADNo[nIndex][0] >= m_nMCBxSectionFirstADNo[nIndex][0]))
     {
         //
-        memcpy(m_MCBDataTmp.addata, m_MCBData[nIndex].addata, m_DMInfo[nIndex].nAllChnNum *sizeof(UINT));
+        memcpy(m_MCBDataTmp[nIndex].addata, m_MCBData[nIndex].addata, m_DMInfo[nIndex].nAllChnNum *sizeof(UINT));
         for (j = 0; j < MAX_SECTIONADJNUM; j++)
         {
             if((m_nMCBxSectionFirstADNo[nIndex][j] > 0) && (m_nMCBxSectionLastADNo[nIndex][j] > 0) && (m_nMCBxSectionLastADNo[nIndex][j] >= m_nMCBxSectionFirstADNo[nIndex][j]))
@@ -9808,7 +9808,7 @@ void CMCBCtrlC::UpdateOnePacketDataToApp(OneDBLineOnePackage *pDBDataPackage)
                     nPreSectionEndRowNum = nPreSectionADNum*m_DMInfo[nIndex].nRowNum + k*m_DMInfo[nIndex].nDMNum*m_DMInfo[nIndex].nRowNum;
                     for(i = 0; i < nSectionRowNum; i++)
                     {
-                        m_MCBData[nIndex].addata[nPreSectionEndRowNum + i].ul = m_MCBDataTmp.addata[nSectionFirstRowNo+i].ul;
+                        m_MCBData[nIndex].addata[nPreSectionEndRowNum + i].ul = m_MCBDataTmp[nIndex].addata[nSectionFirstRowNo+i].ul;
                     }
                 }
             }
@@ -9964,28 +9964,28 @@ void CMCBCtrlC::UpdateOnePacketDataToApp(OneDBLineOnePackage *pDBDataPackage)
                     // 拷贝前次数据备份数据
                     memcpy(&m_MCBDataTmp, &m_MCBDataBackup[nMCB], sizeof(MCBData));//拷贝前次数据备份
                     //copy current packet head to m_MCBDataTmp����������������
-                    memcpy(&m_MCBDataTmp.d_head, &m_MCBData[nMCB].d_head, sizeof(MCBData_H));   //temporarily save current MCBData_H
+                    memcpy(&m_MCBDataTmp[nIndex].d_head, &m_MCBData[nMCB].d_head, sizeof(MCBData_H));   //temporarily save current MCBData_H
                     ////////////////////////////////////////
                     //��������������������������
-                    m_MCBDataTmp.d_head.head_use.scounter = m_MCBDataTmp.d_head.head_use.scounter + i;//nSocketCounter;	// socket packet serial number, self-add//������������,1����
-                    m_MCBDataTmp.d_head.head_use.pcounter.l = m_lPrePulseCnt[nMCB] + 1 + i;//nPulseCounter;	// pulse trigger number//����������������������
-                    m_MCBDataTmp.d_head.head_use.accEnergy = -1;//������������������
+                    m_MCBDataTmp[nIndex].d_head.head_use.scounter = m_MCBDataTmp[nIndex].d_head.head_use.scounter + i;//nSocketCounter;	// socket packet serial number, self-add//������������,1����
+                    m_MCBDataTmp[nIndex].d_head.head_use.pcounter.l = m_lPrePulseCnt[nMCB] + 1 + i;//nPulseCounter;	// pulse trigger number//����������������������
+                    m_MCBDataTmp[nIndex].d_head.head_use.accEnergy = -1;//������������������
                     ////////////////////////////////////////
                     parsed_pkg_n[nMCB]++;//����������������������������1
                     //����������������
 					gCallBack(MCB_MSG_DATA, WPARAM(&m_MCBDataTmp), nMCB);
                     //
                     memset(tmp,0,512);
-                    sprintf(tmp,"HMCB%d ZeroPadding one frame data at %d(socket)/%d(pluse).\n", nMCB, m_MCBDataTmp.d_head.head_use.scounter, m_MCBDataTmp.d_head.head_use.pcounter.l);
+                    sprintf(tmp,"HMCB%d ZeroPadding one frame data at %d(socket)/%d(pluse).\n", nMCB, m_MCBDataTmp[nIndex].d_head.head_use.scounter, m_MCBDataTmp[nIndex].d_head.head_use.pcounter.l);
                     sz_szInfo = tmp;
                     WriteLogFile(sz_szInfo);
                     ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-                    if(1 == ((m_MCBDataTmp.d_head.head_use.scounter) % 100))
+                    if(1 == ((m_MCBDataTmp[nIndex].d_head.head_use.scounter) % 100))
                     {
                         memset(tmp,0,512);
                         sprintf(tmp,"HMCB%d software socket data counts: %d, hardware pluse counts: %d, differ:%d\n",
-                                         nMCB, m_MCBDataTmp.d_head.head_use.scounter, m_MCBDataTmp.d_head.head_use.pcounter.l,
-                                         m_MCBDataTmp.d_head.head_use.pcounter.l - m_MCBDataTmp.d_head.head_use.scounter);
+                                         nMCB, m_MCBDataTmp[nIndex].d_head.head_use.scounter, m_MCBDataTmp[nIndex].d_head.head_use.pcounter.l,
+                                         m_MCBDataTmp[nIndex].d_head.head_use.pcounter.l - m_MCBDataTmp[nIndex].d_head.head_use.scounter);
                         WriteLogFile(sz_szInfo);
                         //����X����������������
                     }
