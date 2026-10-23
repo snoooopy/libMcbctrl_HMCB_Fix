@@ -1558,7 +1558,7 @@ void CMCBCtrlC::ReadConfigParaFromIni()
 		//str.Format(_T("DEVICETYPE = %s, DEVICETYPEID = %d, this is a standard device.\n"), strDVType, m_nDeviceTypeID);
 		//WriteLogFile(str);
         memset(tmp,0,512);
-        sprintf(tmp,"DEVICETYPE = %s, DEVICETYPEID = %d, this is a standard device.\n", str, m_nDeviceTypeID);
+        sprintf(tmp,"DEVICETYPE = %s, DEVICETYPEID = %d, this is a standard device.\n", str.c_str(), m_nDeviceTypeID);
         sz_szInfo = tmp;
         WriteLogFile(sz_szInfo);
 	}
@@ -1567,7 +1567,7 @@ void CMCBCtrlC::ReadConfigParaFromIni()
 		//str.Format(_T("DEVICETYPE = %s, DEVICETYPEID = %d, this is a CS0200M device.\n"), strDVType, m_nDeviceTypeID);
 		//WriteLogFile(str);
         memset(tmp,0,512);
-        sprintf(tmp,"DEVICETYPE = %s, DEVICETYPEID = %d, this is a CS0200M device.\n", str, m_nDeviceTypeID);
+        sprintf(tmp,"DEVICETYPE = %s, DEVICETYPEID = %d, this is a CS0200M device.\n", str.c_str(), m_nDeviceTypeID);
         sz_szInfo = tmp;
         WriteLogFile(sz_szInfo);
 	}
@@ -1576,7 +1576,7 @@ void CMCBCtrlC::ReadConfigParaFromIni()
 		//str.Format(_T("DEVICETYPEID = %d, this is an unknown device device.\n"));
 		//WriteLogFile(str);
         memset(tmp,0,512);
-        sprintf(tmp,"DEVICETYPE = %s, DEVICETYPEID = %d, this is an unknown device device.\n", str, m_nDeviceTypeID);
+        sprintf(tmp,"DEVICETYPE = %s, DEVICETYPEID = %d, this is an unknown device device.\n", str.c_str(), m_nDeviceTypeID);
         sz_szInfo = tmp;
         WriteLogFile(sz_szInfo);
 	}
