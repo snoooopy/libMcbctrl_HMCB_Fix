@@ -734,24 +734,13 @@ bool ETH_CTRL_IsValid(unsigned short nMCB)
 {
     // return ( (_ETH_CTRL_socket.size()>0 && _ETH_CTRL_socket[nMCB] != NULL && (_ETH_CTRL_socket[nMCB]->is_open())) ? 0 : 1);
 
-    // 确保 nMCB 在 vector 范围内
-    if (nMCB >= _ETH_CTRL_socket.size()) {
-        std::cerr << "ETH_CTRL_IsValid: Index " << nMCB << " out of range!" << std::endl;
+    // 有效性谓词：false（未连接/已关闭/索引未扩容）是正常返回值，不打印。
+    // 首次 INITIAL 时 InitialMCB_HMCB4 开头会 ConnectClose 清理"尚不存在"的
+    // 旧连接，每板会各走到一次这里（真机验证为良性探测，随后 EDAQ 正常）。
+    if (nMCB >= _ETH_CTRL_socket.size())
         return false;
-    }
-
-    // 确保指针有效
-    if (_ETH_CTRL_socket[nMCB] == nullptr) {
-        std::cerr << "ETH_CTRL_IsValid: Socket pointer is NULL for index " << nMCB << std::endl;
+    if (_ETH_CTRL_socket[nMCB] == nullptr)
         return false;
-    }
-
-    // 确保 socket 仍然是打开的
-    if (!_ETH_CTRL_socket[nMCB]->is_open()) {
-        std::cerr << "ETH_CTRL_IsValid: Socket at index " << nMCB << " is closed" << std::endl;
-        return false;
-    }
-
-    return true;
+    return _ETH_CTRL_socket[nMCB]->is_open();
 }
 
