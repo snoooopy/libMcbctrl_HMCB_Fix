@@ -150,7 +150,10 @@ void SetMCBCommand(WPARAM wParam, LPARAM lParam)
         }
         g_strIniFilePath = (char*)lParam;
     }
-    if (gpMCBThread ==NULL && wParam !=MCB_CMD_INITIAL)
+    // SETCONFIGFILE 只设置 ini 路径，不依赖工作线程；且其赋值已在上方完成。
+    // 原守卫把它也拦下，导致每次启动先打一条 "ERROR! MCB is not initialed!"
+    // （功能无影响但误导排障）。未初始化时仍拦截其余命令。
+    if (gpMCBThread ==NULL && wParam !=MCB_CMD_INITIAL && wParam !=MCB_CMD_SETCONFIGFILE)
 	{
 		str ="ERROR! MCB is not initialed!\n";
         std::cout << str << std::endl;
